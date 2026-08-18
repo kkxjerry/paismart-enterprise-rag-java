@@ -1,0 +1,74 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "30s",
+    "similarity": {
+      "enterprise_bm25": {
+        "type": "BM25",
+        "k1": 2.2,
+        "b": 1.0
+      }
+    }
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "_meta": {
+      "schema_version": "1-qwen3-embedding-4b-2048-bm25-english",
+      "dataset": "onyx-dot-app/EnterpriseRAG-Bench",
+      "embedding_model": "Qwen/Qwen3-Embedding-4B",
+      "embedding_dimension": 2048,
+      "bm25_k1": 2.2,
+      "bm25_b": 1.0
+    },
+    "properties": {
+      "benchmarkDocId": { "type": "keyword" },
+      "chunkId": { "type": "integer" },
+      "title": {
+        "type": "text",
+        "analyzer": "standard",
+        "search_analyzer": "standard",
+        "similarity": "enterprise_bm25",
+        "fields": {
+          "keyword": { "type": "keyword", "ignore_above": 512 },
+          "english": {
+            "type": "text",
+            "analyzer": "english",
+            "search_analyzer": "english",
+            "similarity": "enterprise_bm25"
+          }
+        }
+      },
+      "textContent": {
+        "type": "text",
+        "analyzer": "standard",
+        "search_analyzer": "standard",
+        "similarity": "enterprise_bm25",
+        "fields": {
+          "english": {
+            "type": "text",
+            "analyzer": "english",
+            "search_analyzer": "english",
+            "similarity": "enterprise_bm25"
+          }
+        }
+      },
+      "sourceType": { "type": "keyword" },
+      "sourcePath": { "type": "keyword", "ignore_above": 1024 },
+      "sourceDataset": { "type": "keyword" },
+      "tenantId": { "type": "keyword" },
+      "classification": { "type": "keyword" },
+      "allowedGroupIds": { "type": "keyword" },
+      "deniedGroupIds": { "type": "keyword" },
+      "vector": {
+        "type": "dense_vector",
+        "dims": 2048,
+        "index": true,
+        "similarity": "cosine"
+      },
+      "modelVersion": { "type": "keyword" },
+      "contentHash": { "type": "keyword" },
+      "indexedAt": { "type": "date" }
+    }
+  }
+}

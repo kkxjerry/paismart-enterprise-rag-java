@@ -1,0 +1,29 @@
+{
+  "source_dataset": "project-sample",
+  "questions": [
+    {
+      "id": "sample_q1",
+      "question": "What are the default per-file and total request limits for multipart uploads?",
+      "question_type": "basic",
+      "source_types": ["github"],
+      "expected_doc_ids": ["sample_github_upload_limits"],
+      "gold_answer": "10 MiB per file and 50 MiB per request."
+    },
+    {
+      "id": "sample_q2",
+      "question": "How long does contractor access last before it expires by default?",
+      "question_type": "semantic",
+      "source_types": ["confluence"],
+      "expected_doc_ids": ["sample_confluence_access"],
+      "gold_answer": "90 days."
+    },
+    {
+      "id": "sample_q3",
+      "question": "What is the policy for opening an office on the Moon?",
+      "question_type": "info_not_found",
+      "source_types": [],
+      "expected_doc_ids": [],
+      "gold_answer": "The corpus does not contain this information."
+    }
+  ]
+}

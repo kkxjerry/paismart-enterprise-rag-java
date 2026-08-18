@@ -1,0 +1,12 @@
+/target/
+/.idea/
+*.iml
+.DS_Store
+.env
+/.venv-data/
+__pycache__/
+*.py[cod]
+/runs/
+/data/enterpriserag/
+*.log
+*.tmp

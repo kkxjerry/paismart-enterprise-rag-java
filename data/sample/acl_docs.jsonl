@@ -1,0 +1,3 @@
+{"doc_id":"sample_github_upload_limits","tenant_id":"tenant_redwood","source_type":"github","classification":"internal","allowed_group_ids":["role:admin","role:employee","source:github"],"denied_group_ids":[]}
+{"doc_id":"sample_confluence_access","tenant_id":"tenant_redwood","source_type":"confluence","classification":"internal","allowed_group_ids":["role:admin","role:employee","source:confluence"],"denied_group_ids":[]}
+{"doc_id":"sample_slack_incident","tenant_id":"tenant_redwood","source_type":"slack","classification":"internal","allowed_group_ids":["role:admin","role:employee","source:slack"],"denied_group_ids":[]}

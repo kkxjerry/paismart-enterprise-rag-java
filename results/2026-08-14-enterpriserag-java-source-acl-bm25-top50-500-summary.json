@@ -1,0 +1,22 @@
+{
+  "run_id" : "paismart_java_enterpriserag_source_acl_hybrid_rrf",
+  "created_at" : "2026-08-14T01:09:20.614004953+08:00",
+  "runtime" : "java",
+  "index" : "knowledge_base_benchmark_stream_v1",
+  "retrieval" : "source_acl_bm25",
+  "retriever_k" : 50,
+  "rrf_k" : 10,
+  "top_k_documents" : 50,
+  "questions_total" : 500,
+  "questions_evaluable" : 470,
+  "hit@1" : 0.7872340425531915,
+  "hit@5" : 0.9234042553191489,
+  "hit@10" : 0.951063829787234,
+  "hit@20" : 0.9723404255319149,
+  "mrr@10" : 0.8469520432286388,
+  "expected_doc_hit@10" : 0.951063829787234,
+  "all_expected_docs_hit@10" : 0.874468085106383,
+  "no_gold_doc_count" : 30,
+  "avg_latency_ms" : 44.904989642000004,
+  "p95_latency_ms" : 86.726498
+}

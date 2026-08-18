@@ -1,0 +1,13 @@
+{
+  "event" : "import_complete",
+  "index" : "paismart_enterpriserag_java_github_smoke_20260818_v1",
+  "embedding_model" : "Qwen/Qwen3-Embedding-4B",
+  "embedding_dimension" : 2048,
+  "documents_processed" : 3,
+  "chunks_indexed" : 3,
+  "batches_completed" : 1,
+  "documents_processed_this_run" : 0,
+  "chunks_indexed_this_run" : 0,
+  "elapsed_seconds_this_run" : 0.020783781,
+  "checkpoint" : "runs/sample-import-checkpoint.json"
+}

@@ -13,6 +13,7 @@ in the experiment workspace.
 | `...text-embedding-v4...` | DashScope cloud embedding comparison |
 | `2026-08-18-github-standalone...` | Fresh 500-question rerun with this standalone Jar |
 | `2026-08-18-a40-sample...` | Three-document end-to-end smoke |
+| `2026-08-27-...bge-reranker-base...` | CPU-only larger-reranker comparison on frozen E5 and Qwen3 candidates |
 
 Read `../docs/REPRODUCIBILITY.md` before comparing percentages. In particular, `hit@10` is document
 retrieval recall over 470 evaluable questions, not final answer accuracy.

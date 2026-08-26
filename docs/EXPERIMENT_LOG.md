@@ -69,6 +69,11 @@ Qwen3 Dense Hit@10 仍只有 95.96%，必须与 BM25 路线融合才能达到 98
 96.38%。原因是 reranker 与英文企业文档、长 Chunk 的匹配不稳定，并破坏已正确的
 BM25 头部排序。结论是 rerank 需要可观测的定向路由，不能默认全局开启。
 
+2026-08-27 使用更大的 `BAAI/bge-reranker-base` 在 CPU 上复测固定 Top50 候选。
+E5 四路 Hit@10 从97.87%降到95.53%，Qwen3四路从98.09%降到96.17%。BGE比
+MiniLM-L6好1.06pp，但仍不如无rerank；详见
+[`RERANKER_EXPERIMENT_2026-08-27.md`](RERANKER_EXPERIMENT_2026-08-27.md)。
+
 ## 云端模型对照
 
 保持语料、Chunk、索引参数和融合参数不变，只替换向量：

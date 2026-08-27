@@ -74,6 +74,11 @@ E5 四路 Hit@10 从97.87%降到95.53%，Qwen3四路从98.09%降到96.17%。BGE�
 MiniLM-L6好1.06pp，但仍不如无rerank；详见
 [`RERANKER_EXPERIMENT_2026-08-27.md`](RERANKER_EXPERIMENT_2026-08-27.md)。
 
+保持 BGE 模型不变后，neighbor multi-chunk 将 Hit→Miss 从12题降到8题，完整
+parent-child降到7题；parent方案 Hit@10为97.45%、MRR@10为0.9114。方向验证了
+单Chunk表示问题，但相对无rerank的98.09%仍未反超，且约增加2.69秒/题。详见
+[`MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md`](MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md)。
+
 ## 云端模型对照
 
 保持语料、Chunk、索引参数和融合参数不变，只替换向量：

@@ -191,6 +191,7 @@ java -jar target/paismart-enterprise-rag.jar evaluate ... --retrieval-mode hybri
 - [数据格式](docs/DATA_FORMAT.md)
 - [完整实验记录](docs/EXPERIMENT_LOG.md)
 - [更大 Reranker 对照实验](docs/RERANKER_EXPERIMENT_2026-08-27.md)
+- [Multi-Chunk / Parent-Child Reranker 实验](docs/MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md)
 - [复现与指标口径](docs/REPRODUCIBILITY.md)
 - [验证记录](docs/VALIDATION.md)
 - [面试讲法](docs/INTERVIEW_GUIDE.md)

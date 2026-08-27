@@ -106,6 +106,9 @@ Qwen3 reranker experiment should wait for safe GPU capacity and should first
 change the rerank input to parent-child or multi-chunk document evidence. That
 would test model quality without repeating the known single-chunk bottleneck.
 
+That representation follow-up has now been completed with the same BGE model;
+see [`MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md`](MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md).
+
 ## Artifacts
 
 - `results/2026-08-27-enterpriserag-e5-four-route-bge-reranker-base-cpu-500-summary.json`

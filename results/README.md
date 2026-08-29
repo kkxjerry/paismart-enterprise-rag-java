@@ -15,6 +15,7 @@ in the experiment workspace.
 | `2026-08-18-a40-sample...` | Three-document end-to-end smoke |
 | `2026-08-27-...bge-reranker-base...` | CPU-only larger-reranker comparison on frozen E5 and Qwen3 candidates |
 | `2026-08-27-...bge-*-chunk-gpu...` | Same BGE model with single, neighboring, and full parent child evidence |
+| `2026-08-29-...` | Unified Qwen3/ES and BGE single/neighbor/parent runs for four additional benchmarks |
 
 Read `../docs/REPRODUCIBILITY.md` before comparing percentages. In particular, `hit@10` is document
 retrieval recall over 470 evaluable questions, not final answer accuracy.

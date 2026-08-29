@@ -79,6 +79,13 @@ parent-child降到7题；parent方案 Hit@10为97.45%、MRR@10为0.9114。方向
 单Chunk表示问题，但相对无rerank的98.09%仍未反超，且约增加2.69秒/题。详见
 [`MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md`](MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md)。
 
+2026-08-29 将同一协议扩展到 MS MARCO、MIRACL中文、LoTTE和HotpotQA。BGE
+single rerank分别把Hit@10从83.80%提升到99.10%、65.14%提升到95.42%、
+77.50%提升到90.20%、98.50%提升到99.70%。EnterpriseRAG是五个数据集中唯一
+发生全局rerank回退的数据集，说明模型本身有效，企业长文档表示和强第一阶段排序才是
+主要差异。详见
+[`CROSS_BENCHMARK_RERANK_2026-08-29.md`](CROSS_BENCHMARK_RERANK_2026-08-29.md)。
+
 ## 云端模型对照
 
 保持语料、Chunk、索引参数和融合参数不变，只替换向量：

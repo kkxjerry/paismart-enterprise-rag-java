@@ -11,8 +11,11 @@
 5. Importer 用确定性 `_id=docId:chunkId` Bulk 写 ES；每个文档批次原子更新 checkpoint。
 
 断点只在整个“分块、Embedding、Bulk 写入”批次成功后前移。中途失败时同一批会重跑，
-确定性 ID 让写入保持幂等。改变数据文件、索引、模型、维度或 Chunk 参数后，旧 checkpoint
-会被签名检查拒绝。
+确定性 ID 让写入保持幂等。改变数据文件、ACL 文件、索引、模型、维度、调用格式、query
+instruction 或 Chunk 参数后，旧 checkpoint 会被签名检查拒绝。
+
+每个 Chunk 还保存 `documentVersion`、`documentHash`、`sourceUpdatedAt` 和 `contentHash`。
+这些字段不参与文档检索打分，用于 Evidence 引用、版本审计和冲突标记。
 
 ## 在线检索链路
 
@@ -27,7 +30,8 @@
 
 每条路线先按 `benchmarkDocId` collapse，避免一个长文档的多个 Chunk 挤占 TopK。
 同一份 tenant/source/ACL filter 应用于每条路线，然后用 weighted RRF 融合“排名”，
-而不是直接相加不可比较的 cosine 和 BM25 原始分数。
+而不是直接相加不可比较的 cosine 和 BM25 原始分数。融合时同时保留每条路线选中的
+代表 Chunk、route rank、weight、raw score 和 RRF contribution。
 
 已验证四路参数：
 
@@ -40,23 +44,44 @@ weights: dense=0.75, original BM25=0.50,
          keyword BM25=1.25, English BM25=1.50
 ```
 
+## Evidence 链路
+
+启用 `evidence-enabled=true` 后，文档级排名保持不变：
+
+```text
+Top documents
+-> 用相同 ACL filter 做一次 bounded inner_hits lexical search
+-> 合并四路代表 Chunk 与文档内候选 Chunk
+-> EvidenceBuilder 选择互补 Chunk
+-> 按单文档和全局 Token 预算生成 EvidenceSpan
+```
+
+EvidenceBuilder 不使用 `question_type`、gold 文档或 benchmark 标签改变选择逻辑。相同
+`sourcePath` 出现多个版本时保留证据并输出冲突标记，不自动猜测哪个版本正确。
+
 ## 评测链路
 
-Evaluator 同时写两类产物：
+Evaluator 写四类产物：
 
-- `summary.json`：总体、`by_question_type`、`by_source_type` 聚合指标。
-- `details.jsonl`：每题的标准文档、最终排名、各阶段延迟，便于错误分析。
+- `summary.json`：Hit/MRR、Evidence recall/coverage、Token、ACL 和延迟聚合指标。
+- `details.jsonl`：每题文档排名、各路线贡献、Evidence 诊断和各阶段延迟。
+- `contexts.jsonl`：Chunk 级 citation，可直接交给 Python 生成评测。
+- `manifest.json`：最终配置、代码版本、输入哈希、索引 mapping 和运行状态。
 
-检索阶段不接 LLM。这样标准文档没有召回时，不会被模型生成出来的流畅答案掩盖。
+检索与 Evidence 阶段不接 LLM。这样可以分开判断“文档是否召回”“事实是否进入
+Evidence”和“生成模型是否正确使用 Evidence”。
 
 ## 关键代码
 
 - `PaiSmartRagCli`：可执行 Jar 的命令分发。
 - `ElasticsearchIndexCommand`：动态 mapping。
 - `EnterpriseRagImporter`：流式、断点、并发 Embedding、Bulk。
-- `EnterpriseRagJavaBenchmark`：四路召回、ACL filter、指标。
+- `ExperimentConfig`：加载版本化实验配置，并合并显式 CLI 覆盖。
+- `RunManifest`：记录代码、输入、索引、配置和运行状态。
+- `EnterpriseRagJavaBenchmark`：四路召回、ACL filter、Evidence 导出和指标。
 - `Bm25QueryRewriter`：关键词路线。
 - `ReciprocalRankFusion`：加权 RRF。
+- `EvidenceBuilder`：互补 Chunk 选择、Token 预算、版本冲突和 EvidenceSpan。
 
 ## 没有合入的方案
 

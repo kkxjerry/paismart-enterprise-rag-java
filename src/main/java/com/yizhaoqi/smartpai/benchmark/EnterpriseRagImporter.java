@@ -32,7 +32,7 @@ import java.util.concurrent.Future;
 public final class EnterpriseRagImporter {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final int CHECKPOINT_VERSION = 1;
+    private static final int CHECKPOINT_VERSION = 2;
 
     private EnterpriseRagImporter() {
     }
@@ -204,10 +204,22 @@ public final class EnterpriseRagImporter {
         for (JsonNode document : documents) {
             String docId = requiredText(document, "doc_id");
             String title = document.path("title").asText("");
+            String documentText = document.path("text").asText("");
             String sourceType = document.path("source_type").asText("unknown");
+            String documentVersion = firstText(
+                    document.path("document_version"),
+                    document.path("version"),
+                    document.path("metadata").path("document_version"),
+                    document.path("metadata").path("version"));
+            String sourceUpdatedAt = firstText(
+                    document.path("source_updated_at"),
+                    document.path("updated_at"),
+                    document.path("metadata").path("source_updated_at"),
+                    document.path("metadata").path("updated_at"));
+            String documentHash = sha256(title + "\n" + documentText);
             AclDocument acl = aclByDocId.getOrDefault(docId, AclDocument.empty());
             List<String> parts = TextChunker.chunk(
-                    document.path("text").asText(""),
+                    documentText,
                     config.chunkSize(),
                     config.chunkOverlap());
             for (int index = 0; index < parts.size(); index++) {
@@ -226,6 +238,13 @@ public final class EnterpriseRagImporter {
                 source.set("allowedGroupIds", MAPPER.valueToTree(acl.allowedGroupIds()));
                 source.set("deniedGroupIds", MAPPER.valueToTree(acl.deniedGroupIds()));
                 source.put("modelVersion", config.embeddingModel());
+                source.put("documentHash", documentHash);
+                if (!documentVersion.isBlank()) {
+                    source.put("documentVersion", documentVersion);
+                }
+                if (!sourceUpdatedAt.isBlank()) {
+                    source.put("sourceUpdatedAt", sourceUpdatedAt);
+                }
                 source.put("contentHash", sha256(text));
                 source.put("indexedAt", indexedAt);
                 chunks.add(new Chunk(docId + ":" + String.format("%05d", chunkId), source));
@@ -320,14 +339,29 @@ public final class EnterpriseRagImporter {
         if (indexMapping.isMissingNode() && mapping.fields().hasNext()) {
             indexMapping = mapping.fields().next().getValue();
         }
-        JsonNode properties = indexMapping.path("mappings").path("properties");
-        int dims = properties.path("vector").path("dims").asInt(-1);
-        if (dims != config.embeddingDimension()) {
+        validateMapping(indexMapping.path("mappings"), config.embeddingDimension());
+    }
+
+    static void validateMapping(JsonNode mappings, int expectedDimension) {
+        JsonNode properties = mappings.path("properties");
+        int dims = properties.path("vector").path("dims").asInt(
+                properties.path("vector").path("dimension").asInt(-1));
+        if (dims != expectedDimension) {
             throw new IllegalStateException(
-                    "index vector dimension mismatch: expected " + config.embeddingDimension() + ", got " + dims);
+                    "index vector dimension mismatch: expected " + expectedDimension + ", got " + dims);
         }
         if (!"standard".equals(properties.path("textContent").path("analyzer").asText())) {
             throw new IllegalStateException("EnterpriseRAG textContent must use the standard analyzer");
+        }
+        for (String field : List.of("documentVersion", "documentHash", "contentHash")) {
+            if (!"keyword".equals(properties.path(field).path("type").asText())) {
+                throw new IllegalStateException(
+                        "EnterpriseRAG P1 index must map " + field + " as keyword");
+            }
+        }
+        if (!"date".equals(properties.path("sourceUpdatedAt").path("type").asText())) {
+            throw new IllegalStateException(
+                    "EnterpriseRAG P1 index must map sourceUpdatedAt as date");
         }
     }
 
@@ -364,12 +398,18 @@ public final class EnterpriseRagImporter {
     private static Map<String, Object> signature(Config config) throws IOException {
         Map<String, Object> signature = new LinkedHashMap<>();
         Path docs = config.docs().toAbsolutePath().normalize();
+        Path aclDocs = config.aclDocs().toAbsolutePath().normalize();
         signature.put("docs_path", docs.toString());
         signature.put("docs_size", Files.size(docs));
         signature.put("docs_mtime_ms", Files.getLastModifiedTime(docs).toMillis());
+        signature.put("acl_docs_path", aclDocs.toString());
+        signature.put("acl_docs_size", Files.size(aclDocs));
+        signature.put("acl_docs_mtime_ms", Files.getLastModifiedTime(aclDocs).toMillis());
         signature.put("index", config.index());
         signature.put("embedding_model", config.embeddingModel());
         signature.put("embedding_dimension", config.embeddingDimension());
+        signature.put("embedding_api_format", config.embeddingApiFormat());
+        signature.put("embedding_query_instruction", config.embeddingQueryInstruction());
         signature.put("chunk_size", config.chunkSize());
         signature.put("chunk_overlap", config.chunkOverlap());
         return signature;
@@ -432,6 +472,15 @@ public final class EnterpriseRagImporter {
             throw new IllegalArgumentException("document is missing " + field);
         }
         return value;
+    }
+
+    private static String firstText(JsonNode... values) {
+        for (JsonNode value : values) {
+            if (value != null && value.isValueNode() && !value.asText().isBlank()) {
+                return value.asText();
+            }
+        }
+        return "";
     }
 
     private static String sha256(String text) {

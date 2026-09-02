@@ -1,8 +1,8 @@
 # PaiSmart EnterpriseRAG Java Benchmark
 
-一个可独立运行的 Java 17 企业 RAG 检索项目：下载并转换 EnterpriseRAG-Bench，
-分块后调用真实 Embedding，写入隔离的 Elasticsearch 索引，再用固定 500 题评测
-Dense、BM25 和四路 Hybrid。它不依赖 PaiSmart 原应用、MySQL、Redis 或 Spring。
+一个可独立运行的 Java 17 企业 RAG 项目：下载并转换 EnterpriseRAG-Bench，分块后调用
+真实 Embedding，写入隔离的 Elasticsearch 索引，再评测 Dense、BM25、四路 Hybrid
+以及文档内部 Evidence 选择。它不依赖 PaiSmart 原应用、MySQL、Redis 或 Spring。
 
 > 这里的 `Hit@10=98.09%` 表示 470 道可评测问题中，标准文档进入 Top10 的比例，
 > 不是最终回答 98.09% 正确，更不是 100% 准确率。
@@ -25,6 +25,16 @@ Dense、BM25 和四路 Hybrid。它不依赖 PaiSmart 原应用、MySQL、Redis 
 在 [`results/`](results/) 中。整理后的独立 Jar 已在 A40 重跑 500 题，Hit/MRR 与迁移前
 完全一致，见 [验证记录](docs/VALIDATION.md)。
 
+当前新增了两层能力：
+
+- **P0 可复现运行**：一个版本化 `ExperimentConfig` 驱动完整评测，并生成包含代码提交、
+  最终参数、输入 SHA-256、索引 mapping 元数据和运行状态的 `RunManifest`。
+- **P1 Java EvidenceBuilder**：保持文档排名不变，保留四条路线命中的代表 Chunk，再对
+  Top 文档做有界的文档内检索，按互补性和 Token 预算输出 Chunk 级引用。
+
+P0/P1 已通过单元测试，但尚未在 A40 对固定 500 题完成新的 Evidence 全量重跑，因此本仓库
+不会提前声称最终回答质量已经提升；`98.09%` 仍是原四路文档检索基线。
+
 ## 流程
 
 ```mermaid
@@ -40,24 +50,30 @@ flowchart LR
   D --> F
   D --> G
   D --> H
-  E --> I["Weighted RRF"]
+  E --> I["Weighted RRF document ranking"]
   F --> I
   G --> I
   H --> I
-  I --> J["Hit@K / MRR / slices / latency"]
+  I --> J["Retain route chunks + bounded inner-document search"]
+  J --> K["Java EvidenceBuilder"]
+  K --> L["EvidenceSpan / citation / token budget"]
+  I --> M["Hit@K / MRR"]
+  K --> N["Evidence recall / coverage / latency"]
 ```
 
 ## 仓库内容
 
 ```text
-src/main/java/.../benchmark/   建索引、断点导入、检索评测 CLI
-src/main/java/.../service/     BM25 query rewrite、weighted RRF
-src/test/                      单元测试
+src/main/java/.../benchmark/   建索引、断点导入、ExperimentConfig、RunManifest、评测 CLI
+src/main/java/.../service/     BM25 rewrite、weighted RRF、EvidenceBuilder
+src/test/                      检索、配置、Manifest、Evidence 与导入单元测试
 data/sample/                   可公开的三文档 smoke 数据
-tools/                         EnterpriseRAG-Bench 下载转换脚本
-config/                        已验证的 2048 维 ES mapping 快照
-results/                       六次固定 500 题实验 summary
-docs/                          架构、数据协议、实验与面试说明
+config/experiments/            可直接执行的版本化实验配置
+config/elasticsearch-2048.json 历史 2048 维 ES mapping 快照
+config/elasticsearch-evidence-2048.json 带版本字段的 P1 兼容 mapping
+config/elasticsearch-evidence-2560.json Qwen3 原生维度 P1 对照 mapping
+results/                       已验证的固定 500 题实验 summary
+docs/                          架构、Evidence、复现、实验与面试说明
 ```
 
 ## 1. 构建
@@ -84,7 +100,10 @@ vllm serve /opt/models/Qwen3-Embedding-4B \
   --max-model-len 8192
 ```
 
-服务应提供 `POST /v1/embeddings`，返回 2048 维 float 向量。
+当前实际验证的 vLLM 版本是 `0.17.0`。Qwen3-Embedding-4B 原生输出为 2560 维；
+直接使用上述服务时，应创建 2560 维索引。历史 `98.09%` 基线使用已有 2048 维兼容索引，
+若继续复用该索引，Embedding 服务前必须显式执行“前 2048 维截取 + L2 归一化”，并由
+实验配置记录这个转换，不能把 2048 维误写成模型原生输出。
 
 ## 3. 用 sample 跑完整链路
 
@@ -93,9 +112,9 @@ vllm serve /opt/models/Qwen3-Embedding-4B \
 ```bash
 java -jar target/paismart-enterprise-rag.jar create-index \
   --es-url http://127.0.0.1:19200 \
-  --index paismart_enterpriserag_sample_v1 \
+  --index paismart_enterpriserag_sample_qwen3_2560_v1 \
   --embedding-model Qwen/Qwen3-Embedding-4B \
-  --embedding-dimension 2048
+  --embedding-dimension 2560
 ```
 
 导入三篇 sample 文档：
@@ -105,40 +124,36 @@ java -jar target/paismart-enterprise-rag.jar import \
   --docs data/sample/docs.jsonl \
   --acl-docs data/sample/acl_docs.jsonl \
   --es-url http://127.0.0.1:19200 \
-  --index paismart_enterpriserag_sample_v1 \
+  --index paismart_enterpriserag_sample_qwen3_2560_v1 \
   --embedding-url http://127.0.0.1:18084/v1/embeddings \
   --embedding-api-format local \
   --embedding-model Qwen/Qwen3-Embedding-4B \
-  --embedding-dimension 2048 \
-  --checkpoint runs/sample-import-checkpoint.json
+  --embedding-dimension 2560 \
+  --checkpoint runs/sample-qwen3-2560-import-checkpoint.json
 ```
 
-执行四路 Hybrid：
+执行四路 Hybrid + Java EvidenceBuilder：
 
 ```bash
 java -jar target/paismart-enterprise-rag.jar evaluate \
-  --questions data/sample/questions.json \
-  --output runs/sample-summary.json \
-  --details-output runs/sample-details.jsonl \
-  --es-url http://127.0.0.1:19200 \
-  --index paismart_enterpriserag_sample_v1 \
-  --embedding-url http://127.0.0.1:18084/v1/embeddings \
-  --embedding-api-format local \
-  --embedding-model Qwen/Qwen3-Embedding-4B \
-  --embedding-dimension 2048 \
-  --embedding-query-instruction "Given an enterprise search query, retrieve relevant passages that answer the query" \
-  --retrieval-mode hybrid \
-  --retriever-k 50 \
-  --dense-chunk-candidates 500 \
-  --dense-num-candidates 2500 \
-  --rrf-k 10 \
-  --dense-weight 0.75 \
-  --bm25-weight 0.50 \
-  --keyword-bm25-enabled true \
-  --keyword-bm25-weight 1.25 \
-  --english-bm25-enabled true \
-  --english-bm25-weight 1.50 \
-  --top-k 50
+  --config config/experiments/sample-evidence-v1.json
+```
+
+显式 CLI 参数可以覆盖配置文件，例如临时修改全局 Evidence Token 预算：
+
+```bash
+java -jar target/paismart-enterprise-rag.jar evaluate \
+  --config config/experiments/sample-evidence-v1.json \
+  --evidence-token-budget 800
+```
+
+运行后生成：
+
+```text
+runs/sample-evidence-v1-summary.json    检索与 Evidence 聚合指标
+runs/sample-evidence-v1-details.jsonl   每题文档排名、路线贡献和 Evidence 诊断
+runs/sample-evidence-v1-contexts.jsonl  可直接交给 Python 生成评测的 contexts
+runs/sample-evidence-v1-manifest.json   配置、代码、输入哈希、索引和运行状态
 ```
 
 ## 4. 准备固定 500 题
@@ -155,8 +170,20 @@ python tools/prepare_enterpriserag_bench.py \
   --limit-docs 10000
 ```
 
-随后把 sample 命令中的三条数据路径换成 `data/enterpriserag/`。全量 Qwen3 导入
-会生成 115,406 个 2048 维向量，必须使用新的 2048 维索引，并保留 checkpoint。
+随后准备独立索引并保留 checkpoint。历史基线包含 115,406 个 2048 维兼容向量；
+原生维度对照应建立新的 2560 维索引，不能覆盖历史索引。固定参数的 P0/P1 评测配置为：
+
+```bash
+java -jar target/paismart-enterprise-rag.jar evaluate \
+  --config config/experiments/enterpriserag-qwen3-evidence-v1.json
+```
+
+该配置指向新的 `knowledge_base_benchmark_qwen3_4b_2048_evidence_v2` 索引。它需要使用
+2048 维兼容适配器重新导入同一语料，不能覆盖历史 v1 索引。正式回答 A/B 前，应先确认
+v2 的文档排名与 v1 基线一致；每次运行都会记录实际 mapping、代码提交和输入哈希。
+原生 2560 维对照使用
+`config/experiments/enterpriserag-qwen3-native2560-evidence-v1.json`，其结果状态当前明确为
+`not_yet_run`，不能提前与历史基线比较。
 
 ## 5. 分开做消融实验
 
@@ -179,16 +206,21 @@ java -jar target/paismart-enterprise-rag.jar evaluate ... --retrieval-mode hybri
 ## 安全边界
 
 - 数据、模型、API Key、ES 索引均不提交 Git。
-- 云端 Key 通过 `DASHSCOPE_API_KEY` 环境变量注入，不写配置和实验结果。
+- 云端 Key 通过 `DASHSCOPE_API_KEY` 环境变量注入，不写配置；运行时参数中的 Key 会在
+  Manifest 中自动替换为 `<redacted>`。
 - Benchmark 的 `source_types` 被用作可见数据源范围；生产系统必须改为登录用户真实
   ACL，不能把题目标签当权限。
 - `create-index` 遇到同名索引默认失败，不会隐式删除业务数据。
+- EvidenceBuilder 复用同一来源/ACL 过滤范围，不改变文档排名；当前 Benchmark 中的
+  `source_types` 仍是离线模拟，不能冒充真实生产 ACL。
+- 同一路径出现多个版本时，EvidenceBuilder 会保留并标记冲突，不会静默挑一个版本当真相。
 - Apache-2.0 只覆盖本仓库代码；外部数据和模型遵循各自许可。
 
 ## 文档
 
 - [架构与代码入口](docs/ARCHITECTURE.md)
 - [数据格式](docs/DATA_FORMAT.md)
+- [P0/P1：配置、Manifest 与 EvidenceBuilder](docs/EVIDENCE_BUILDER.md)
 - [完整实验记录](docs/EXPERIMENT_LOG.md)
 - [更大 Reranker 对照实验](docs/RERANKER_EXPERIMENT_2026-08-27.md)
 - [Multi-Chunk / Parent-Child Reranker 实验](docs/MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md)

@@ -25,5 +25,13 @@ class ElasticsearchIndexCommandTest {
                 .path("fields").path("english").path("analyzer").asText()).isEqualTo("english");
         assertThat(mapping.path("mappings").path("properties").path("vector").path("dims").asInt())
                 .isEqualTo(2048);
+        assertThat(mapping.path("mappings").path("_meta").path("schema_version").asText())
+                .isEqualTo("2-enterpriserag-java-evidence");
+        assertThat(mapping.path("mappings").path("properties").path("documentVersion").path("type").asText())
+                .isEqualTo("keyword");
+        assertThat(mapping.path("mappings").path("properties").path("documentHash").path("type").asText())
+                .isEqualTo("keyword");
+        assertThat(mapping.path("mappings").path("properties").path("sourceUpdatedAt").path("type").asText())
+                .isEqualTo("date");
     }
 }

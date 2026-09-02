@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "name": "enterpriserag-qwen3-native2560-evidence-v1",
+  "base_dir": "../..",
+  "arguments": {
+    "run-id": "enterpriserag-qwen3-native2560-evidence-v1",
+    "questions": "data/enterpriserag/questions.json",
+    "output": "runs/enterpriserag-qwen3-native2560-evidence-v1-summary.json",
+    "details-output": "runs/enterpriserag-qwen3-native2560-evidence-v1-details.jsonl",
+    "manifest-output": "runs/enterpriserag-qwen3-native2560-evidence-v1-manifest.json",
+    "evidence-output": "runs/enterpriserag-qwen3-native2560-evidence-v1-contexts.jsonl",
+    "es-url": "http://127.0.0.1:19200",
+    "engine": "elasticsearch",
+    "index": "knowledge_base_benchmark_qwen3_4b_2560_evidence_v1",
+    "embedding-url": "http://127.0.0.1:18084/v1/embeddings",
+    "embedding-api-format": "local",
+    "embedding-model": "Qwen/Qwen3-Embedding-4B",
+    "embedding-dimension": 2560,
+    "embedding-query-instruction": "Given an enterprise search query, retrieve relevant passages that answer the query",
+    "retrieval-mode": "hybrid",
+    "retriever-k": 50,
+    "dense-chunk-candidates": 500,
+    "dense-num-candidates": 2500,
+    "rrf-k": 10,
+    "dense-weight": 0.75,
+    "bm25-weight": 0.50,
+    "keyword-bm25-enabled": true,
+    "keyword-bm25-weight": 1.25,
+    "english-bm25-enabled": true,
+    "english-bm25-weight": 1.50,
+    "top-k": 50,
+    "evidence-enabled": true,
+    "evidence-top-documents": 10,
+    "evidence-candidate-chunks-per-document": 8,
+    "evidence-chunks-per-document": 3,
+    "evidence-token-budget": 6000,
+    "evidence-per-document-token-budget": 1200,
+    "evidence-max-chunk-tokens": 512,
+    "evidence-redundancy-penalty": 0.35,
+    "progress-every": 25
+  },
+  "inputs": {
+    "questions": "data/enterpriserag/questions.json",
+    "documents": "data/enterpriserag/docs.jsonl",
+    "acl_documents": "data/enterpriserag/acl_docs.jsonl",
+    "index_mapping": "config/elasticsearch-evidence-2560.json"
+  },
+  "metadata": {
+    "dataset": "onyx-dot-app/EnterpriseRAG-Bench",
+    "experiment_role": "native-dimension control for the historical 2048 compatibility index",
+    "result_status": "not_yet_run",
+    "comparison_requirements": {
+      "same_questions_docs_acl": true,
+      "same_chunking": true,
+      "same_four_route_weights": true,
+      "same_evidence_config": true
+    },
+    "embedding": {
+      "model": "Qwen/Qwen3-Embedding-4B",
+      "native_dimension": 2560,
+      "stored_dimension": 2560,
+      "dimension_strategy": "native_2560",
+      "normalization": "model_service_output"
+    },
+    "runtime": {
+      "embedding_server": "vLLM",
+      "verified_version": "0.17.0"
+    },
+    "evidence": {
+      "mode": "java_evidence_builder",
+      "selection": "bounded lexical candidates plus retained multi-route chunks",
+      "conflict_policy": "preserve_and_mark",
+      "citation_granularity": "one citation per selected chunk"
+    }
+  }
+}

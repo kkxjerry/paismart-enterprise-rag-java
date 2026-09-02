@@ -13,6 +13,10 @@ final class Arguments {
         this.values = Map.copyOf(values);
     }
 
+    static Arguments fromMap(Map<String, String> values) {
+        return new Arguments(new LinkedHashMap<>(values));
+    }
+
     static Arguments parse(String[] args) {
         Map<String, String> values = new LinkedHashMap<>();
         for (int index = 0; index < args.length; index += 2) {
@@ -25,6 +29,14 @@ final class Arguments {
             }
         }
         return new Arguments(values);
+    }
+
+    Map<String, String> asMap() {
+        return values;
+    }
+
+    boolean contains(String key) {
+        return values.containsKey(key);
     }
 
     String required(String key) {
@@ -58,6 +70,22 @@ final class Arguments {
     int nonNegativeInt(String key, int defaultValue) {
         int value = Integer.parseInt(string(key, Integer.toString(defaultValue)));
         if (value < 0) {
+            throw new IllegalArgumentException("--" + key + " must not be negative");
+        }
+        return value;
+    }
+
+    double positiveDouble(String key, double defaultValue) {
+        double value = Double.parseDouble(string(key, Double.toString(defaultValue)));
+        if (!Double.isFinite(value) || value <= 0.0d) {
+            throw new IllegalArgumentException("--" + key + " must be positive");
+        }
+        return value;
+    }
+
+    double nonNegativeDouble(String key, double defaultValue) {
+        double value = Double.parseDouble(string(key, Double.toString(defaultValue)));
+        if (!Double.isFinite(value) || value < 0.0d) {
             throw new IllegalArgumentException("--" + key + " must not be negative");
         }
         return value;

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "name": "sample-evidence-v1",
+  "base_dir": "../..",
+  "arguments": {
+    "run-id": "sample-evidence-v1",
+    "questions": "data/sample/questions.json",
+    "output": "runs/sample-evidence-v1-summary.json",
+    "details-output": "runs/sample-evidence-v1-details.jsonl",
+    "manifest-output": "runs/sample-evidence-v1-manifest.json",
+    "evidence-output": "runs/sample-evidence-v1-contexts.jsonl",
+    "es-url": "http://127.0.0.1:19200",
+    "engine": "elasticsearch",
+    "index": "paismart_enterpriserag_sample_qwen3_2560_v1",
+    "embedding-url": "http://127.0.0.1:18084/v1/embeddings",
+    "embedding-api-format": "local",
+    "embedding-model": "Qwen/Qwen3-Embedding-4B",
+    "embedding-dimension": 2560,
+    "embedding-query-instruction": "Given an enterprise search query, retrieve relevant passages that answer the query",
+    "retrieval-mode": "hybrid",
+    "retriever-k": 20,
+    "dense-chunk-candidates": 50,
+    "dense-num-candidates": 100,
+    "rrf-k": 10,
+    "dense-weight": 0.75,
+    "bm25-weight": 0.50,
+    "keyword-bm25-enabled": true,
+    "keyword-bm25-weight": 1.25,
+    "english-bm25-enabled": true,
+    "english-bm25-weight": 1.50,
+    "top-k": 10,
+    "evidence-enabled": true,
+    "evidence-top-documents": 3,
+    "evidence-candidate-chunks-per-document": 4,
+    "evidence-chunks-per-document": 2,
+    "evidence-token-budget": 600,
+    "evidence-per-document-token-budget": 240,
+    "evidence-max-chunk-tokens": 160,
+    "evidence-redundancy-penalty": 0.35,
+    "progress-every": 1
+  },
+  "inputs": {
+    "questions": "data/sample/questions.json",
+    "documents": "data/sample/docs.jsonl",
+    "acl_documents": "data/sample/acl_docs.jsonl"
+  },
+  "metadata": {
+    "dataset": "project-sample",
+    "purpose": "Smoke-test the config, manifest, route evidence, EvidenceBuilder, and generation-context JSONL contract.",
+    "embedding": {
+      "model": "Qwen/Qwen3-Embedding-4B",
+      "native_dimension": 2560,
+      "stored_dimension": 2560,
+      "dimension_strategy": "native_2560"
+    },
+    "runtime": {
+      "embedding_server": "vLLM",
+      "verified_version": "0.17.0"
+    }
+  }
+}

@@ -7,7 +7,11 @@
       "question_type": "basic",
       "source_types": ["github"],
       "expected_doc_ids": ["sample_github_upload_limits"],
-      "gold_answer": "10 MiB per file and 50 MiB per request."
+      "gold_answer": "10 MiB per file and 50 MiB per request.",
+      "answer_facts": [
+        "The default max_file_size is 10 MiB per file.",
+        "The default max_total_request_size is 50 MiB per request."
+      ]
     },
     {
       "id": "sample_q2",
@@ -15,7 +19,10 @@
       "question_type": "semantic",
       "source_types": ["confluence"],
       "expected_doc_ids": ["sample_confluence_access"],
-      "gold_answer": "90 days."
+      "gold_answer": "90 days.",
+      "answer_facts": [
+        "Contractor access expires after 90 days by default."
+      ]
     },
     {
       "id": "sample_q3",
@@ -23,7 +30,8 @@
       "question_type": "info_not_found",
       "source_types": [],
       "expected_doc_ids": [],
-      "gold_answer": "The corpus does not contain this information."
+      "gold_answer": "The corpus does not contain this information.",
+      "answer_facts": []
     }
   ]
 }

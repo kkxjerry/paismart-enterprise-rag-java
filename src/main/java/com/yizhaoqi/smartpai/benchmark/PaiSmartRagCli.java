@@ -31,9 +31,14 @@ public final class PaiSmartRagCli {
                 Commands:
                   create-index  Create an isolated Elasticsearch benchmark index
                   import        Chunk, embed, and bulk-index EnterpriseRAG JSONL documents
-                  evaluate      Run Dense, BM25, or weighted multi-route Hybrid evaluation
+                  evaluate      Run retrieval and optional bounded Java EvidenceBuilder evaluation
 
-                Run the command examples in README.md for complete reproducible arguments.
+                Reproducible evaluation:
+                  java -jar target/paismart-enterprise-rag.jar evaluate \\
+                    --config config/experiments/sample-evidence-v1.json
+
+                Explicit CLI arguments override values loaded from --config. Secrets must come from
+                environment variables or explicit runtime arguments; they are redacted from manifests.
                 """);
     }
 }

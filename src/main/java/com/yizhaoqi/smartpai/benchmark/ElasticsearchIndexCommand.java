@@ -58,7 +58,7 @@ public final class ElasticsearchIndexCommand {
         ObjectNode mappings = root.putObject("mappings");
         mappings.put("dynamic", "strict");
         ObjectNode meta = mappings.putObject("_meta");
-        meta.put("schema_version", "1-enterpriserag-java");
+        meta.put("schema_version", "2-enterpriserag-java-evidence");
         meta.put("dataset", "onyx-dot-app/EnterpriseRAG-Bench");
         meta.put("embedding_model", config.embeddingModel());
         meta.put("embedding_dimension", config.embeddingDimension());
@@ -83,6 +83,9 @@ public final class ElasticsearchIndexCommand {
         vector.put("index", true);
         vector.put("similarity", "cosine");
         keyword(properties, "modelVersion");
+        keyword(properties, "documentVersion");
+        keyword(properties, "documentHash");
+        properties.putObject("sourceUpdatedAt").put("type", "date").put("ignore_malformed", true);
         keyword(properties, "contentHash");
         properties.putObject("indexedAt").put("type", "date");
         return root;

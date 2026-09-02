@@ -39,7 +39,8 @@ scores have identical difficulty.
 
 ### Embedding compatibility note
 
-The current vLLM 0.19 service returns Qwen3's native 2,560 dimensions and rejects
+The actual experiment log used vLLM 0.17.0. That service returns Qwen3's native
+2,560 dimensions and rejects
 the `dimensions=2048` parameter. To remain compatible with the existing
 EnterpriseRAG 2,048-dimensional index, a local adapter kept the first 2,048
 dimensions and L2-normalized them. This is a controlled compatibility setting,

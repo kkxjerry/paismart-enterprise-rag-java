@@ -90,6 +90,53 @@ class EnterpriseRagJavaBenchmarkTest {
     }
 
     @Test
+    void rejectsOutputsThatOverwriteTheExperimentConfigOrDeclaredInputs(@TempDir Path tempDir) throws Exception {
+        Path questions = tempDir.resolve("questions.json");
+        Path documents = tempDir.resolve("docs.jsonl");
+        Files.writeString(questions, "[]");
+        Files.writeString(documents, "{}\n");
+
+        Path inputCollision = tempDir.resolve("input-collision.json");
+        Files.writeString(inputCollision, """
+                {
+                  "schema_version": 1,
+                  "arguments": {
+                    "questions": "questions.json",
+                    "output": "docs.jsonl",
+                    "details-output": "details.jsonl"
+                  },
+                  "inputs": {
+                    "documents": "docs.jsonl"
+                  }
+                }
+                """);
+        assertThatThrownBy(() -> EnterpriseRagJavaBenchmark.Config.parse(new String[] {
+                "--config", inputCollision.toString()
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not overwrite")
+                .hasMessageContaining("docs.jsonl");
+
+        Path configCollision = tempDir.resolve("config-collision.json");
+        Files.writeString(configCollision, """
+                {
+                  "schema_version": 1,
+                  "arguments": {
+                    "questions": "questions.json",
+                    "output": "config-collision.json",
+                    "details-output": "details.jsonl"
+                  }
+                }
+                """);
+        assertThatThrownBy(() -> EnterpriseRagJavaBenchmark.Config.parse(new String[] {
+                "--config", configCollision.toString()
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not overwrite")
+                .hasMessageContaining("config-collision.json");
+    }
+
+    @Test
     void buildsEmbeddingRequestFromConfigInsteadOfHardCodingE5Small() {
         EnterpriseRagJavaBenchmark.Config config = EnterpriseRagJavaBenchmark.Config.parse(new String[] {
                 "--questions", "questions.json",
@@ -308,6 +355,26 @@ class EnterpriseRagJavaBenchmarkTest {
     }
 
     @Test
+    void excludesNoGoldQuestionsFromEvidenceAnswerMetrics() {
+        EnterpriseRagJavaBenchmark.Question noGold = new EnterpriseRagJavaBenchmark.Question(
+                "q-no-gold",
+                "What is the unsupported retention period?",
+                List.of(),
+                List.of(),
+                "info_not_found",
+                "The corpus does not contain this information.",
+                List.of("The retention period is unavailable."));
+
+        EnterpriseRagJavaBenchmark.EvidenceScores scores = EnterpriseRagJavaBenchmark.scoreEvidence(
+                noGold,
+                new EvidenceBuilder.EvidenceBundle(List.of(), 0, List.of(), 0, 0));
+
+        assertThat(scores.factTokenRecall()).isNull();
+        assertThat(scores.factCoverage()).isNull();
+        assertThat(scores.goldAnswerTokenRecall()).isNull();
+    }
+
+    @Test
     void rejectsStaleEmbeddingDimensionMetadataInExperimentConfig(@TempDir Path tempDir) throws Exception {
         Path configFile = tempDir.resolve("experiment.json");
         Files.writeString(configFile, """
@@ -350,6 +417,10 @@ class EnterpriseRagJavaBenchmarkTest {
         });
         JsonNode validMappings = MAPPER.readTree("""
                 {
+                  "_meta": {
+                    "embedding_model": "intfloat/multilingual-e5-small",
+                    "embedding_dimension": 2048
+                  },
                   "properties": {
                     "vector": {"type": "dense_vector", "dims": 2048},
                     "documentVersion": {"type": "keyword"},
@@ -369,6 +440,15 @@ class EnterpriseRagJavaBenchmarkTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("config=2048")
                 .hasMessageContaining("mapping=2560");
+
+        JsonNode wrongModel = validMappings.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) wrongModel.path("_meta"))
+                .put("embedding_model", "Qwen/Qwen3-Embedding-4B");
+        assertThatThrownBy(() -> EnterpriseRagJavaBenchmark.validateIndexMetadata(config, wrongModel))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("embedding model mismatch")
+                .hasMessageContaining("multilingual-e5-small")
+                .hasMessageContaining("Qwen/Qwen3-Embedding-4B");
 
         JsonNode missingVersionField = validMappings.deepCopy();
         ((com.fasterxml.jackson.databind.node.ObjectNode) missingVersionField.path("properties"))

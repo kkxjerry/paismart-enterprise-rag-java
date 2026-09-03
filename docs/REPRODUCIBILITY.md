@@ -95,8 +95,9 @@ Qwen query instruction=Given an enterprise search query, retrieve relevant passa
 - `avg_document_context_tokens`：旧单代表 Chunk 上下文的正则 token 近似值。
 - `avg_evidence_tokens`：EvidenceBuilder 实际输出的正则 token 近似值。
 - `avg_context_tokens`：启用 Evidence 时等于 Evidence Token；未启用时等于旧文档上下文 Token。
-- `evidence_fact_token_recall_avg`：answer facts 的 token 在 Evidence 中出现的平均比例。
-- `evidence_fact_coverage_avg`：token recall 至少 0.60 的 answer facts 比例。
+- `evidence_fact_token_recall_avg`：仅在有 gold 文档的可评测问题上，answer facts 的 token 在 Evidence 中出现的平均比例。
+- `evidence_fact_coverage_avg`：仅在可评测问题上，token recall 至少 0.60 的 answer facts 比例。
+- `evidence_gold_answer_token_recall_avg`：仅在可评测问题上，gold answer token 在 Evidence 中出现的平均比例；no-gold 问题不进入该指标。
 - `evidence_source_filter_violation_count`：Evidence 是否越过问题的离线 source scope。
 - `document_ranking_changed_by_evidence_count`：P1 固定为 0，证明 Evidence 没有修改文档排名。
 - `by_question_type` / `by_source_type`：相同口径的分层结果。
@@ -111,5 +112,7 @@ Qwen query instruction=Given an enterprise search query, retrieve relevant passa
 4. 报 470 题分母和 30 道 no-gold，不能只报 500 的模糊“准确率”。
 5. 同时保留 summary、逐题 details、contexts 和 manifest；总分提升后检查 question/source slice。
 6. Evidence A/B 必须复用完全相同的文档排名和 Generator，只替换上下文构建方式。
-7. 延迟比较需说明本地 GPU还是远程 API，以及是否预热。
-8. 2048 兼容实验与原生 2560 对照必须分别报告，不能只写“Qwen3 维度”。
+7. 运行前必须校验实际索引的向量维度、mapping `_meta.embedding_model` 和 Evidence 字段；同维度但不同模型的索引不能混用。
+8. 配置、输入和输出路径必须隔离，输出不得覆盖问题、文档、ACL、mapping 或 ExperimentConfig。
+9. 延迟比较需说明本地 GPU还是远程 API，以及是否预热。
+10. 2048 兼容实验与原生 2560 对照必须分别报告，不能只写“Qwen3 维度”。

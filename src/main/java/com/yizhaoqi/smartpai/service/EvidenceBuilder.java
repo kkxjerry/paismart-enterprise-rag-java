@@ -2,6 +2,7 @@ package com.yizhaoqi.smartpai.service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -72,7 +73,7 @@ public final class EvidenceBuilder {
                 String text = selection.text();
                 int tokens = selection.tokenCount();
                 if (tokens > allowed) {
-                    text = truncateToTokens(text, allowed);
+                    text = focusWindow(text, queryTokens, allowed);
                     tokens = tokenCount(text);
                 }
                 ChunkCandidate chunk = selection.chunk();
@@ -141,7 +142,7 @@ public final class EvidenceBuilder {
         List<CandidateState> candidates = new ArrayList<>();
         for (ChunkCandidate chunk : chunks) {
             int scoringTextLimit = Math.min(config.maxChunkTokens(), config.perDocumentTokenBudget());
-            String scoringText = truncateToTokens(chunk.text(), scoringTextLimit);
+            String scoringText = focusWindow(chunk.text(), queryTokens, scoringTextLimit);
             Set<String> tokens = tokenSet(chunk.title() + "\n" + scoringText);
             Set<String> matchedQueryTokens = intersection(queryTokens, tokens);
             double queryCoverage = ratio(matchedQueryTokens.size(), queryTokens.size());
@@ -215,7 +216,7 @@ public final class EvidenceBuilder {
             if (wouldCreateFragment && allowedTokens < MIN_EVIDENCE_TOKENS && !selected.isEmpty()) {
                 break;
             }
-            String text = truncateToTokens(candidate.chunk().text(), allowedTokens);
+            String text = focusWindow(candidate.chunk().text(), queryTokens, allowedTokens);
             int tokens = tokenCount(text);
             if (tokens == 0) {
                 selectedKeys.add(chunkKey(candidate.chunk()));
@@ -298,7 +299,7 @@ public final class EvidenceBuilder {
                     }
                 });
             });
-            if (docIds.size() > 1 && (versions.size() > 1 || hashes.size() > 1)) {
+            if (versions.size() > 1 || hashes.size() > 1) {
                 conflicts.add(new Conflict(
                         sourcePath,
                         List.copyOf(docIds),
@@ -319,24 +320,110 @@ public final class EvidenceBuilder {
         return count;
     }
 
-    static String truncateToTokens(String text, int maxTokens) {
+    static String focusWindow(String text, Set<String> queryTokens, int maxTokens) {
         if (text == null || text.isBlank() || maxTokens <= 0) {
             return "";
         }
+        List<TokenSpan> spans = new ArrayList<>();
         Matcher matcher = TOKEN_PATTERN.matcher(text);
-        int count = 0;
-        int end = 0;
         while (matcher.find()) {
-            count++;
-            end = matcher.end();
-            if (count >= maxTokens) {
-                break;
-            }
+            spans.add(new TokenSpan(
+                    matcher.start(),
+                    matcher.end(),
+                    matcher.group().toLowerCase(Locale.ROOT)));
         }
-        if (count < maxTokens || end >= text.length()) {
+        if (spans.size() <= maxTokens) {
             return text.trim();
         }
-        return text.substring(0, end).trim() + " …";
+
+        Set<String> normalizedQueryTokens = new HashSet<>();
+        if (queryTokens != null) {
+            queryTokens.stream()
+                    .filter(value -> value != null && !value.isBlank())
+                    .map(value -> value.toLowerCase(Locale.ROOT))
+                    .forEach(normalizedQueryTokens::add);
+        }
+
+        int windowSize = maxTokens;
+        Map<String, Integer> counts = new HashMap<>();
+        int matchedTokens = 0;
+        long matchedPositionSum = 0L;
+        for (int index = 0; index < windowSize; index++) {
+            TokenSpan span = spans.get(index);
+            if (normalizedQueryTokens.contains(span.value())) {
+                counts.merge(span.value(), 1, Integer::sum);
+                matchedTokens++;
+                matchedPositionSum += index;
+            }
+        }
+
+        int bestStart = 0;
+        int bestUniqueMatches = counts.size();
+        int bestMatchedTokens = matchedTokens;
+        double bestCenterDistance = centerDistance(
+                matchedPositionSum, matchedTokens, 0, windowSize);
+
+        for (int start = 1; start <= spans.size() - windowSize; start++) {
+            int removedIndex = start - 1;
+            TokenSpan removed = spans.get(removedIndex);
+            if (normalizedQueryTokens.contains(removed.value())) {
+                int remaining = counts.getOrDefault(removed.value(), 0) - 1;
+                if (remaining <= 0) {
+                    counts.remove(removed.value());
+                } else {
+                    counts.put(removed.value(), remaining);
+                }
+                matchedTokens--;
+                matchedPositionSum -= removedIndex;
+            }
+
+            int addedIndex = start + windowSize - 1;
+            TokenSpan added = spans.get(addedIndex);
+            if (normalizedQueryTokens.contains(added.value())) {
+                counts.merge(added.value(), 1, Integer::sum);
+                matchedTokens++;
+                matchedPositionSum += addedIndex;
+            }
+
+            int uniqueMatches = counts.size();
+            double centerDistance = centerDistance(
+                    matchedPositionSum, matchedTokens, start, windowSize);
+            boolean better = uniqueMatches > bestUniqueMatches
+                    || (uniqueMatches == bestUniqueMatches && matchedTokens > bestMatchedTokens)
+                    || (uniqueMatches == bestUniqueMatches
+                            && matchedTokens == bestMatchedTokens
+                            && centerDistance < bestCenterDistance);
+            if (better) {
+                bestStart = start;
+                bestUniqueMatches = uniqueMatches;
+                bestMatchedTokens = matchedTokens;
+                bestCenterDistance = centerDistance;
+            }
+        }
+
+        int startChar = spans.get(bestStart).start();
+        int endChar = spans.get(bestStart + windowSize - 1).end();
+        String selected = text.substring(startChar, endChar).trim();
+        if (bestStart > 0) {
+            selected = "… " + selected;
+        }
+        if (bestStart + windowSize < spans.size()) {
+            selected = selected + " …";
+        }
+        return selected;
+    }
+
+    private static double centerDistance(
+            long matchedPositionSum,
+            int matchedTokens,
+            int windowStart,
+            int windowSize) {
+        if (matchedTokens <= 0) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double matchedCenter = matchedPositionSum / (double) matchedTokens;
+        double windowCenter = windowStart + (windowSize - 1) / 2.0d;
+        return Math.abs(matchedCenter - windowCenter);
     }
 
     private static Set<String> tokenSet(String text) {
@@ -374,7 +461,6 @@ public final class EvidenceBuilder {
 
     public record Config(
             int topDocuments,
-            int candidateChunksPerDocument,
             int chunksPerDocument,
             int tokenBudget,
             int perDocumentTokenBudget,
@@ -382,7 +468,7 @@ public final class EvidenceBuilder {
             double redundancyPenalty) {
 
         public Config validated() {
-            if (topDocuments <= 0 || candidateChunksPerDocument <= 0 || chunksPerDocument <= 0) {
+            if (topDocuments <= 0 || chunksPerDocument <= 0) {
                 throw new IllegalArgumentException("evidence document and chunk limits must be positive");
             }
             if (tokenBudget < 0 || perDocumentTokenBudget <= 0 || maxChunkTokens <= 0) {
@@ -519,6 +605,9 @@ public final class EvidenceBuilder {
 
     private static String value(String text) {
         return text == null ? "" : text;
+    }
+
+    private record TokenSpan(int start, int end, String value) {
     }
 
     private record CandidateState(

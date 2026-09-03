@@ -119,11 +119,10 @@ public final class EnterpriseRagJavaBenchmark {
 
             List<Result> results = new ArrayList<>(questions.size());
             long runStarted = System.nanoTime();
-            BufferedWriter evidence = config.evidenceEnabled()
-                    ? Files.newBufferedWriter(config.evidenceOutput(), StandardCharsets.UTF_8)
-                    : null;
             try (BufferedWriter details = Files.newBufferedWriter(config.detailsOutput(), StandardCharsets.UTF_8);
-                 BufferedWriter evidenceWriter = evidence) {
+                 BufferedWriter evidenceWriter = config.evidenceEnabled()
+                         ? Files.newBufferedWriter(config.evidenceOutput(), StandardCharsets.UTF_8)
+                         : null) {
                 for (int index = 0; index < questions.size(); index++) {
                     Question question = questions.get(index);
                     Result result = retrieve(client, config, question);
@@ -153,7 +152,13 @@ public final class EnterpriseRagJavaBenchmark {
             summary.put("details_output", config.detailsOutput().toString());
             summary.put("evidence_output", config.evidenceEnabled() ? config.evidenceOutput().toString() : null);
             MAPPER.writerWithDefaultPrettyPrinter().writeValue(config.output().toFile(), summary);
-            manifest.complete(summary);
+            Map<String, Path> outputArtifacts = new LinkedHashMap<>();
+            outputArtifacts.put("summary", config.output());
+            outputArtifacts.put("details", config.detailsOutput());
+            if (config.evidenceEnabled()) {
+                outputArtifacts.put("evidence", config.evidenceOutput());
+            }
+            manifest.complete(summary, outputArtifacts);
             System.out.println(MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(summary));
         } catch (Exception exception) {
             manifest.fail(exception);
@@ -457,9 +462,12 @@ public final class EnterpriseRagJavaBenchmark {
                 routeSignals);
     }
 
-    private static EvidenceScores scoreEvidence(
+    static EvidenceScores scoreEvidence(
             Question question,
             EvidenceBuilder.EvidenceBundle evidence) {
+        if (question.expectedDocIds().isEmpty()) {
+            return new EvidenceScores(null, null, null);
+        }
         String context = evidence.spans().stream()
                 .map(EvidenceBuilder.EvidenceSpan::text)
                 .reduce("", (left, right) -> left + "\n" + right);
@@ -850,6 +858,20 @@ public final class EnterpriseRagJavaBenchmark {
                     "index vector dimension mismatch: config=" + config.embeddingDimension()
                             + ", mapping=" + vectorDimension);
         }
+        JsonNode metadata = mappings.path("_meta");
+        String mappingEmbeddingModel = metadata.path("embedding_model").asText("").trim();
+        if (!mappingEmbeddingModel.isEmpty()
+                && !mappingEmbeddingModel.equals(config.embeddingModel())) {
+            throw new IllegalStateException(
+                    "index embedding model mismatch: config=" + config.embeddingModel()
+                            + ", mapping=" + mappingEmbeddingModel);
+        }
+        int declaredDimension = metadata.path("embedding_dimension").asInt(-1);
+        if (declaredDimension > 0 && declaredDimension != config.embeddingDimension()) {
+            throw new IllegalStateException(
+                    "index _meta embedding dimension mismatch: config=" + config.embeddingDimension()
+                            + ", mapping_meta=" + declaredDimension);
+        }
         if (!config.evidenceEnabled()) {
             return;
         }
@@ -969,15 +991,6 @@ public final class EnterpriseRagJavaBenchmark {
             if (!result.evidence().conflicts().isEmpty()) {
                 evidenceConflictCaseCount++;
             }
-            if (result.evidenceScores().factTokenRecall() != null) {
-                evidenceFactRecalls.add(result.evidenceScores().factTokenRecall());
-            }
-            if (result.evidenceScores().factCoverage() != null) {
-                evidenceFactCoverage.add(result.evidenceScores().factCoverage());
-            }
-            if (result.evidenceScores().goldAnswerTokenRecall() != null) {
-                evidenceGoldAnswerRecalls.add(result.evidenceScores().goldAnswerTokenRecall());
-            }
             if (!question.sourceTypes().isEmpty()
                     && result.documents().stream().anyMatch(
                             document -> !question.sourceTypes().contains(document.sourceType()))) {
@@ -993,6 +1006,15 @@ public final class EnterpriseRagJavaBenchmark {
                 continue;
             }
             evaluable++;
+            if (result.evidenceScores().factTokenRecall() != null) {
+                evidenceFactRecalls.add(result.evidenceScores().factTokenRecall());
+            }
+            if (result.evidenceScores().factCoverage() != null) {
+                evidenceFactCoverage.add(result.evidenceScores().factCoverage());
+            }
+            if (result.evidenceScores().goldAnswerTokenRecall() != null) {
+                evidenceGoldAnswerRecalls.add(result.evidenceScores().goldAnswerTokenRecall());
+            }
             List<String> ranking = result.documents().stream().map(RankedDocument::docId).toList();
             Set<String> expected = new HashSet<>(question.expectedDocIds());
             int firstRank = firstRank(ranking, expected);
@@ -1343,17 +1365,30 @@ public final class EnterpriseRagJavaBenchmark {
             }
             validateExperimentMetadata(experiment, embeddingModel, embeddingDimension);
             evidenceTopDocuments = Math.min(evidenceTopDocuments, topK);
-            List<Path> protectedPaths = new ArrayList<>(List.of(
-                    questions,
+            List<Path> outputPaths = new ArrayList<>(List.of(
                     output,
                     detailsOutput,
                     manifestOutput));
             if (evidenceEnabled) {
-                protectedPaths.add(evidenceOutput);
+                outputPaths.add(evidenceOutput);
             }
-            if (new HashSet<>(protectedPaths).size() != protectedPaths.size()) {
+            if (new HashSet<>(outputPaths).size() != outputPaths.size()) {
                 throw new IllegalArgumentException(
-                        "questions, summary, details, manifest, and enabled evidence outputs must use distinct paths");
+                        "summary, details, manifest, and enabled evidence outputs must use distinct paths");
+            }
+            Set<Path> protectedInputs = new HashSet<>();
+            protectedInputs.add(questions);
+            protectedInputs.addAll(experiment.inputs().values().stream()
+                    .map(Config::normalized)
+                    .toList());
+            if (experiment.configPath() != null) {
+                protectedInputs.add(normalized(experiment.configPath()));
+            }
+            for (Path outputPath : outputPaths) {
+                if (protectedInputs.contains(outputPath)) {
+                    throw new IllegalArgumentException(
+                            "experiment output must not overwrite a config or input file: " + outputPath);
+                }
             }
             if ("elasticsearch".equals(engine)
                     && !"bm25".equals(retrievalMode)
@@ -1479,7 +1514,6 @@ public final class EnterpriseRagJavaBenchmark {
         EvidenceBuilder.Config evidenceConfig() {
             return new EvidenceBuilder.Config(
                     Math.min(evidenceTopDocuments, topK),
-                    evidenceCandidateChunksPerDocument,
                     evidenceChunksPerDocument,
                     evidenceTokenBudget,
                     evidencePerDocumentTokenBudget,

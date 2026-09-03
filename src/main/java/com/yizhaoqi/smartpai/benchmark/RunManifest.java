@@ -86,27 +86,64 @@ final class RunManifest {
 
     private static ObjectNode codeVersion(Path baseDir) {
         ObjectNode code = MAPPER.createObjectNode();
+        CommandResult gitRoot = command(baseDir, "git", "rev-parse", "--show-toplevel");
         CommandResult commit = command(baseDir, "git", "rev-parse", "HEAD");
         CommandResult branch = command(baseDir, "git", "branch", "--show-current");
         CommandResult status = command(baseDir, "git", "status", "--porcelain");
-        code.put("git_root", baseDir.toString());
+        Path repositoryRoot = gitRoot.success()
+                ? Path.of(gitRoot.output().trim()).toAbsolutePath().normalize()
+                : baseDir;
+        code.put("git_root", repositoryRoot.toString());
         code.put("commit", commit.success() ? commit.output().trim() : "unknown");
         code.put("branch", branch.success() ? branch.output().trim() : "unknown");
-        boolean dirty = status.success() && !status.output().isBlank();
-        code.put("dirty", dirty);
-        code.put("status", status.success() ? status.output().trim() : "unknown");
-        if (dirty) {
-            CommandResult diff = command(baseDir, "git", "diff", "--binary", "HEAD");
-            code.put(
-                    "tracked_diff_sha256",
-                    diff.success()
-                            ? sha256(diff.output().getBytes(StandardCharsets.UTF_8))
-                            : "unavailable");
+        if (status.success()) {
+            boolean dirty = !status.output().isBlank();
+            code.put("dirty", dirty);
+            code.put("status", status.output().trim());
+            if (dirty) {
+                CommandResult diff = command(baseDir, "git", "diff", "--binary", "HEAD");
+                code.put(
+                        "tracked_diff_sha256",
+                        diff.success()
+                                ? sha256(diff.output().getBytes(StandardCharsets.UTF_8))
+                                : "unavailable");
+                addUntrackedFingerprints(code, repositoryRoot);
+            }
+        } else {
+            code.putNull("dirty");
+            code.put("status", "unknown");
+            code.put("git_status_error", status.output().trim());
         }
         if (!commit.success()) {
             code.put("git_error", commit.output().trim());
         }
         return code;
+    }
+
+    private static void addUntrackedFingerprints(ObjectNode code, Path baseDir) {
+        CommandResult untracked = command(
+                baseDir,
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z");
+        if (!untracked.success()) {
+            code.put("untracked_files_error", untracked.output().trim());
+            return;
+        }
+        ObjectNode files = code.putObject("untracked_files");
+        int count = 0;
+        for (String relativePath : untracked.output().split("\\u0000", -1)) {
+            if (relativePath.isBlank()) {
+                continue;
+            }
+            files.set(relativePath, fingerprint(baseDir.resolve(relativePath)));
+            count++;
+        }
+        code.put("untracked_file_count", count);
     }
 
     private static CommandResult command(Path directory, String... command) {
@@ -231,9 +268,16 @@ final class RunManifest {
         }
 
         void complete(Map<String, Object> summary) throws IOException {
+            complete(summary, Map.of());
+        }
+
+        void complete(Map<String, Object> summary, Map<String, Path> outputs) throws IOException {
             root.put("status", "completed");
             root.put("completed_at", now());
             root.set("summary", MAPPER.valueToTree(summary));
+            ObjectNode outputNode = root.putObject("outputs");
+            new TreeMap<>(outputs).forEach((name, path) ->
+                    outputNode.set(name, fingerprint(path)));
             write();
         }
 

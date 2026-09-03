@@ -45,7 +45,7 @@ class EvidenceBuilderTest {
         EvidenceBuilder.EvidenceBundle result = builder.build(
                 "What are the default max_file_size and max_total_request_size for multipart uploads?",
                 List.of(document),
-                new EvidenceBuilder.Config(1, 8, 2, 160, 160, 80, 0.60d));
+                new EvidenceBuilder.Config(1, 2, 160, 160, 80, 0.60d));
 
         assertThat(result.spans()).hasSize(2);
         assertThat(result.spans()).extracting(EvidenceBuilder.EvidenceSpan::chunkId)
@@ -77,7 +77,7 @@ class EvidenceBuilderTest {
         EvidenceBuilder.EvidenceBundle result = builder.build(
                 "token",
                 List.of(first, second),
-                new EvidenceBuilder.Config(2, 4, 2, 50, 40, 40, 0.35d));
+                new EvidenceBuilder.Config(2, 2, 50, 40, 40, 0.35d));
 
         assertThat(result.tokenCount()).isLessThanOrEqualTo(50);
         assertThat(result.spans()).isNotEmpty();
@@ -104,14 +104,14 @@ class EvidenceBuilderTest {
         EvidenceBuilder.EvidenceBundle result = builder.build(
                 "What are the deployment limits?",
                 List.of(document),
-                new EvidenceBuilder.Config(1, 4, 1, 80, 80, 80, 0.35d));
+                new EvidenceBuilder.Config(1, 1, 80, 80, 80, 0.35d));
 
         assertThat(result.spans()).hasSize(1);
         assertThat(result.spans().get(0).queryCoverage()).isZero();
     }
 
     @Test
-    void doesNotCountQueryTermsThatWereRemovedByTokenTruncation() {
+    void centersBudgetedEvidenceAroundQueryTermsNearTheChunkTail() {
         EvidenceBuilder.RouteSignal signal = signal("bm25_original", 1, 1.0d, "doc-tail:00001");
         String text = "filler ".repeat(40) + "criticalneedle";
         EvidenceBuilder.DocumentCandidate document = new EvidenceBuilder.DocumentCandidate(
@@ -130,11 +130,13 @@ class EvidenceBuilderTest {
         EvidenceBuilder.EvidenceBundle result = builder.build(
                 "criticalneedle",
                 List.of(document),
-                new EvidenceBuilder.Config(1, 4, 1, 20, 20, 20, 0.35d));
+                new EvidenceBuilder.Config(1, 1, 20, 20, 20, 0.35d));
 
         assertThat(result.spans()).hasSize(1);
-        assertThat(result.spans().get(0).text()).doesNotContain("criticalneedle");
-        assertThat(result.spans().get(0).queryCoverage()).isZero();
+        assertThat(result.spans().get(0).text()).contains("criticalneedle");
+        assertThat(result.spans().get(0).text()).startsWith("… ");
+        assertThat(result.spans().get(0).queryCoverage()).isEqualTo(1.0d);
+        assertThat(result.spans().get(0).tokenCount()).isLessThanOrEqualTo(20);
     }
 
     @Test
@@ -157,12 +159,65 @@ class EvidenceBuilderTest {
         EvidenceBuilder.EvidenceBundle result = builder.build(
                 "How long does contractor access last?",
                 List.of(oldVersion, newVersion),
-                new EvidenceBuilder.Config(2, 4, 1, 100, 60, 60, 0.35d));
+                new EvidenceBuilder.Config(2, 1, 100, 60, 60, 0.35d));
 
         assertThat(result.conflicts()).hasSize(1);
         assertThat(result.conflicts().get(0).sourcePath()).isEqualTo("confluence:access-policy");
         assertThat(result.conflicts().get(0).documentVersions()).containsExactly("v1", "v2");
         assertThat(result.conflicts().get(0).resolution()).isEqualTo("preserve_and_mark");
+        assertThat(result.spans()).allSatisfy(span ->
+                assertThat(span.conflictGroup()).isEqualTo("source:confluence:access-policy"));
+    }
+
+    @Test
+    void marksStaleChunksFromDifferentVersionsInsideTheSameDocument() {
+        EvidenceBuilder.RouteSignal signal = signal("bm25_original", 1, 1.0d, "doc-stale:00001");
+        EvidenceBuilder.DocumentCandidate document = new EvidenceBuilder.DocumentCandidate(
+                "doc-stale",
+                1,
+                signal.rrfContribution(),
+                List.of(signal),
+                List.of(
+                        new EvidenceBuilder.ChunkCandidate(
+                                "doc-stale",
+                                "doc-stale:00001",
+                                1,
+                                "confluence",
+                                "confluence:access-policy",
+                                "Policy",
+                                "The old policy allowed 60 days.",
+                                "internal",
+                                "v1",
+                                "hash-old",
+                                "2026-07-01T00:00:00Z",
+                                "chunk-old",
+                                5.0d,
+                                List.of(signal)),
+                        new EvidenceBuilder.ChunkCandidate(
+                                "doc-stale",
+                                "doc-stale:00002",
+                                2,
+                                "confluence",
+                                "confluence:access-policy",
+                                "Policy",
+                                "The current policy allows 90 days.",
+                                "internal",
+                                "v2",
+                                "hash-new",
+                                "2026-08-01T00:00:00Z",
+                                "chunk-new",
+                                5.0d,
+                                List.of())));
+
+        EvidenceBuilder.EvidenceBundle result = builder.build(
+                "How many days does the access policy allow?",
+                List.of(document),
+                new EvidenceBuilder.Config(1, 2, 100, 100, 50, 0.35d));
+
+        assertThat(result.conflicts()).hasSize(1);
+        assertThat(result.conflicts().get(0).docIds()).containsExactly("doc-stale");
+        assertThat(result.conflicts().get(0).documentVersions()).containsExactly("v1", "v2");
+        assertThat(result.conflicts().get(0).documentHashes()).containsExactly("hash-new", "hash-old");
         assertThat(result.spans()).allSatisfy(span ->
                 assertThat(span.conflictGroup()).isEqualTo("source:confluence:access-policy"));
     }

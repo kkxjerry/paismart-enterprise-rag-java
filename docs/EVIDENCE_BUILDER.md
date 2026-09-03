@@ -92,7 +92,8 @@ java -jar target/paismart-enterprise-rag.jar evaluate \
   --evidence-token-budget 800
 ```
 
-配置文件包含四部分：
+配置文件包含四部分。运行前还会拒绝两类危险配置：输出文件互相重名，以及输出路径覆盖
+配置文件、问题集、文档、ACL 或 mapping 等已声明输入。
 
 ```json
 {
@@ -124,11 +125,12 @@ Manifest 包含：
 run_id
 ExperimentConfig 路径与 SHA-256
 CLI 覆盖后的最终参数及其 SHA-256
-Git commit / branch / dirty 状态
+Git root / commit / branch / dirty 状态；dirty 时记录 tracked diff 哈希和未跟踪文件哈希，非 Git 目录明确记为 unknown
 Java、OS、CPU 和工作目录
 问题、文档、ACL、mapping 的路径、大小、mtime、SHA-256
 ES index、vector dimension、similarity、text analyzer、mapping _meta
-summary/details/evidence 输出位置
+运行前校验实际 index 的向量维度、Embedding 模型声明和 Evidence 必需字段
+summary/details/evidence 输出位置、大小和 SHA-256
 成功或失败状态
 ```
 
@@ -197,6 +199,10 @@ query token coverage
 相邻 Chunk 的小幅连续性奖励
 ```
 
+当 Chunk 超过单条证据预算时，不再固定截取开头，而是在 Chunk 内寻找覆盖查询词最多的
+连续窗口；查询词相同的窗口优先让命中位置靠近窗口中心。这样不会因为 Token 裁剪把位于
+Chunk 中后部的关键证据删除。
+
 这不是模型 rerank，也不会改变父文档顺序。它解决的是：同一正确文档中，哪些 Chunk 应该
 进入 Prompt。
 
@@ -232,7 +238,8 @@ contentHash
 - `contentHash` 对具体 Chunk 计算 SHA-256。
 - `documentVersion`、`sourceUpdatedAt` 从数据源字段或 metadata 读取。
 
-当 Top 文档中出现相同 `sourcePath`、不同文档 ID，且版本或整文哈希不同，EvidenceBuilder：
+当 Top 文档中出现相同 `sourcePath`，且候选 Chunk 的版本或整文哈希不同，EvidenceBuilder
+会同时覆盖“不同文档 ID 的多个版本”和“同一 docId 残留旧 Chunk”两种情况：
 
 ```text
 保留两边证据

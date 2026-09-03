@@ -68,8 +68,39 @@ Evaluator 写四类产物：
 - `contexts.jsonl`：Chunk 级 citation，可直接交给 Python 生成评测。
 - `manifest.json`：最终配置、代码版本、输入哈希、索引 mapping 和运行状态。
 
-检索与 Evidence 阶段不接 LLM。这样可以分开判断“文档是否召回”“事实是否进入
-Evidence”和“生成模型是否正确使用 Evidence”。
+Java检索与Evidence阶段不接LLM。这样可以分开判断“文档是否召回”“事实是否进入
+Evidence”和“生成模型是否正确使用Evidence”。
+
+## Qwen Plus增强与生成链路
+
+`contexts.jsonl`之后提供两条Python链路：
+
+```text
+Fast:
+EvidenceSpan[] -> 16K Prompt -> Qwen Plus answer
+
+Quality:
+EvidenceSpan[] -> Qwen Plus citation selector
+               -> selected S* first + original fallback
+               -> same 16K Prompt
+               -> Qwen Plus answer
+```
+
+Selector只输出已有`S*`编号，不能改写Evidence。Quality模式没有增加Generator Prompt
+预算，而是让更相关的原始Chunk优先进入有限窗口。Fast是默认，Quality必须显式开启。
+
+生成结果经过：
+
+```text
+JSON contract validation
+citation ID allowlist
+inline citation normalization
+finish_reason=length detection
+bounded output-token expansion retry
+answer/context/citation metrics
+```
+
+`qwen_plus_pair_judge.py`只用于参考答案驱动的盲化辅助评审，不在在线回答链路中。
 
 ## 关键代码
 
@@ -82,6 +113,8 @@ Evidence”和“生成模型是否正确使用 Evidence”。
 - `Bm25QueryRewriter`：关键词路线。
 - `ReciprocalRankFusion`：加权 RRF。
 - `EvidenceBuilder`：互补 Chunk 选择、Token 预算、版本冲突和 EvidenceSpan。
+- `tools/qwen_plus_rag_pipeline.py`：Qwen Plus Fast/Quality增强、生成、校验和指标。
+- `tools/qwen_plus_pair_judge.py`：标签平衡的Qwen Plus成对辅助评审。
 
 ## 没有合入的方案
 

@@ -14,6 +14,8 @@ Qwen native dimension: 2560
 Historical Qwen compatibility index: knowledge_base_benchmark_qwen3_4b_2048_v1
 P1 evidence index: knowledge_base_benchmark_qwen3_4b_2048_evidence_v2
 Cloud index: knowledge_base_benchmark_text_embedding_v4_2048_v1
+Qwen Plus generation/enhancement alias: qwen-plus, observed 2026-09-03
+Qwen Plus API base: https://dashscope.aliyuncs.com/compatible-mode/v1
 ```
 
 为了避免覆盖现有索引，公开复现时应使用带自己后缀的新索引名。
@@ -100,6 +102,51 @@ top_k=50
 Qwen query instruction=Given an enterprise search query, retrieve relevant passages that answer the query
 ```
 
+## Qwen Plus增强与生成
+
+Fast控制组和Quality候选组必须使用相同的Java contexts、相同16K Generator Prompt预算、
+相同`qwen-plus` Alias和相同生成Prompt。Quality只增加一次Evidence排序：
+
+```text
+Qwen Plus返回原始S*引用ID
+→ 被选Evidence前置
+→ 未选Evidence保持原顺序回退
+→ 16K字符截断
+→ Qwen Plus生成
+```
+
+运行：
+
+```bash
+# Fast，CLI默认
+python tools/qwen_plus_rag_pipeline.py \
+  --contexts runs/java-evidence-contexts.jsonl \
+  --output runs/qwen-plus-fast.jsonl \
+  --summary-output runs/qwen-plus-fast-summary.json \
+  --pipeline generate-only \
+  --model qwen-plus \
+  --generation-max-input-chars 16000
+
+# Quality，显式开启
+python tools/qwen_plus_rag_pipeline.py \
+  --contexts runs/java-evidence-contexts.jsonl \
+  --output runs/qwen-plus-quality.jsonl \
+  --summary-output runs/qwen-plus-quality-summary.json \
+  --pipeline enhance-generate \
+  --model qwen-plus \
+  --enhance-max-input-chars 48000 \
+  --enhance-max-selected 8 \
+  --selection-expansion rerank \
+  --generation-max-input-chars 16000
+```
+
+密钥只从`DASHSCOPE_API_KEY`读取。`qwen-plus`是服务端Alias，Manifest无法冻结其内部权重；
+正式复跑必须记录日期、返回模型名、request ID、Token使用和完整逐题输出。`--resume`还会
+校验contexts、qid文件、Prompt、模型和预算组成的run signature，签名不同时拒绝混合旧行。
+
+完整500题结果见
+[`QWEN_PLUS_ENHANCEMENT_GENERATION_2026-09-03.md`](QWEN_PLUS_ENHANCEMENT_GENERATION_2026-09-03.md)。
+
 ## 指标定义
 
 - `questions_total`：本次输入问题总数。
@@ -139,3 +186,7 @@ Qwen query instruction=Given an enterprise search query, retrieve relevant passa
 11. Elasticsearch `_reindex` 会重建 ANN 图，不能保证逐题排名冻结；对既有向量索引做
     Evidence A/B 时，应使用段级 clone，或在索引变更后重新运行并冻结双方共同控制组。
 12. Context Recall提高不等于答案质量提高；必须同时报告固定Generator和Judge结果。
+13. 云端`temperature=0`不能当作跨时间完全确定；至少用独立控制复跑估计漂移。
+14. Evidence增强A/B必须保持Generator Prompt上限相同，不能把扩大上下文误写成排序收益。
+15. 同模型盲评只能作为辅助证据，必须做A/B标签平衡，并同时报告确定性逐题配对指标。
+16. Token汇总仅代表保存产物中的调用；被覆盖的探索运行和旧失败请求不应被误写成完整账单。

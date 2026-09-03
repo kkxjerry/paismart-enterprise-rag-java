@@ -17,6 +17,7 @@ in the experiment workspace.
 | `2026-08-27-...bge-*-chunk-gpu...` | Same BGE model with single, neighboring, and full parent child evidence |
 | `2026-08-29-...` | Unified Qwen3/ES and BGE single/neighbor/parent runs for four additional benchmarks |
 | `2026-09-03-a40-p0-p1-validation-summary.json` | Six bug reproductions/fixes plus retrieval, Evidence, fixed Generator and DeepEval A/B on A40 |
+| `2026-09-03-qwen-plus-enhancement-generation-summary.json` | Qwen Plus Fast/Quality 500-question generation A/B, paired statistics, rejected variants, and blind 100-pair judge |
 
 Read `../docs/REPRODUCIBILITY.md` before comparing percentages. In particular, `hit@10` is document
 retrieval recall over 470 evaluable questions, not final answer accuracy.

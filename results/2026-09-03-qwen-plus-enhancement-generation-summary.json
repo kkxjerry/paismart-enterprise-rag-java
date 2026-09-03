@@ -1,0 +1,278 @@
+{
+  "schema_version": 1,
+  "run_date": "2026-09-03",
+  "purpose": "Evaluate Qwen Plus evidence-order enhancement and grounded answer generation on the fixed Java EvidenceBuilder contexts.",
+  "model": {
+    "provider": "Alibaba Cloud Model Studio",
+    "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model_alias": "qwen-plus",
+    "api_key_env": "DASHSCOPE_API_KEY",
+    "local_generation_model_used": false,
+    "secret_persisted": false
+  },
+  "input": {
+    "questions_total": 500,
+    "questions_answer_evaluable": 480,
+    "unanswerable_questions": 20,
+    "retrieval_hit_at_10": 0.9808510638297873,
+    "contexts_sha256": "876bfcdeb98d593ae3b03cbbcc5c7e9006dc28c878341fad678f4ecf16ce6bd2",
+    "source_contexts": "java-evidence-segment-clone-contexts.jsonl"
+  },
+  "accepted_pipeline": {
+    "name": "qwen_plus_selected_first_with_original_fallback",
+    "enhancement": {
+      "operation": "Qwen Plus selects original citation IDs; selected evidence is promoted before the unchanged original ranking.",
+      "rewrites_evidence": false,
+      "max_input_chars": 48000,
+      "max_input_contexts": 30,
+      "max_selected_citations": 8,
+      "selection_expansion": "rerank",
+      "average_model_selected_citations": 2.796
+    },
+    "generation": {
+      "model": "qwen-plus",
+      "max_context_chars": 16000,
+      "max_contexts": 30,
+      "initial_max_output_tokens": 768,
+      "automatic_output_token_expansion": true,
+      "temperature": 0.0
+    }
+  },
+  "control": {
+    "description": "Qwen Plus generation from the original Java EvidenceBuilder order under the same 16000-character generation context budget.",
+    "questions_successful": 500,
+    "questions_errored": 0,
+    "answer_fact_token_recall": 0.5008543812375775,
+    "answer_fact_coverage": 0.4241969542886662,
+    "context_fact_token_recall": 0.6925083010613521,
+    "context_fact_coverage": 0.7278238299299197,
+    "gold_answer_token_f1": 0.39932830394925806,
+    "gold_answer_token_recall": 0.4761158036517258,
+    "citation_coverage": 0.888,
+    "citation_precision": 1.0,
+    "gold_doc_citation_rate": 0.8936170212765957,
+    "grounded_answer_proxy_rate": 0.32708333333333334,
+    "unanswerable_abstain_accuracy": 0.95,
+    "unanswerable_caveat_accuracy": 1.0,
+    "average_generation_latency_ms": 4143.318641687627,
+    "average_total_latency_ms": 4294.842290508328,
+    "average_generation_context_chars": 15989.608,
+    "artifact_token_accounting": {
+      "prompt_tokens": 2178688,
+      "completion_tokens": 70250,
+      "total_tokens": 2248938,
+      "cached_tokens": 73984
+    }
+  },
+  "candidate": {
+    "description": "Qwen Plus selection reranks evidence, retains the original fallback order, then Qwen Plus generates under the same 16000-character context budget.",
+    "questions_successful": 500,
+    "questions_errored": 0,
+    "answer_fact_token_recall": 0.5411570179873805,
+    "answer_fact_coverage": 0.4772739496312866,
+    "context_fact_token_recall": 0.711457031120153,
+    "context_fact_coverage": 0.7708148121958678,
+    "gold_answer_token_f1": 0.4354158975966481,
+    "gold_answer_token_recall": 0.5184620829037936,
+    "citation_coverage": 0.926,
+    "citation_precision": 1.0,
+    "gold_doc_citation_rate": 0.9340425531914893,
+    "grounded_answer_proxy_rate": 0.36875,
+    "unanswerable_abstain_accuracy": 0.95,
+    "unanswerable_caveat_accuracy": 1.0,
+    "average_enhancement_latency_ms": 2071.5370680825436,
+    "average_generation_latency_ms": 4319.473438418295,
+    "average_total_latency_ms": 6436.048754761984,
+    "average_generation_context_chars": 15989.89,
+    "artifact_token_accounting": {
+      "enhancement": {
+        "prompt_tokens": 4999080,
+        "completion_tokens": 19198,
+        "total_tokens": 5018278,
+        "cached_tokens": 182784
+      },
+      "generation": {
+        "prompt_tokens": 2193088,
+        "completion_tokens": 79099,
+        "total_tokens": 2272187,
+        "cached_tokens": 13312
+      },
+      "combined_total_tokens": 7290465,
+      "additional_tokens_vs_control": 5041527
+    }
+  },
+  "paired_deltas": {
+    "answer_fact_token_recall": {
+      "n": 480,
+      "delta": 0.04030263674980287,
+      "bootstrap_95_ci": [0.02876393304949846, 0.053527947505106095],
+      "improved": 194,
+      "worsened": 109,
+      "unchanged": 177,
+      "two_sided_sign_test_p": 1.1971528966913686e-06
+    },
+    "answer_fact_coverage": {
+      "n": 480,
+      "delta": 0.053076995342620344,
+      "bootstrap_95_ci": [0.02974324575887076, 0.07779403755966256],
+      "improved": 115,
+      "worsened": 53,
+      "unchanged": 312,
+      "two_sided_sign_test_p": 1.9537880314254445e-06
+    },
+    "context_fact_token_recall": {
+      "n": 480,
+      "delta": 0.018948730058800847,
+      "bootstrap_95_ci": [0.014825951815167437, 0.023857451142409825],
+      "improved": 165,
+      "worsened": 29,
+      "unchanged": 286,
+      "two_sided_sign_test_p": 2.6703303846077614e-24
+    },
+    "context_fact_coverage": {
+      "n": 480,
+      "delta": 0.042990982265948066,
+      "bootstrap_95_ci": [0.030583578599353223, 0.056825661572904224],
+      "improved": 83,
+      "worsened": 15,
+      "unchanged": 382,
+      "two_sided_sign_test_p": 1.3988186908802743e-12
+    },
+    "gold_answer_token_f1": {
+      "n": 480,
+      "delta": 0.036087593647390025,
+      "bootstrap_95_ci": [0.02496750954615186, 0.047858567859378774],
+      "improved": 222,
+      "worsened": 152,
+      "unchanged": 106,
+      "two_sided_sign_test_p": 0.00034710018666669353
+    },
+    "gold_answer_token_recall": {
+      "n": 480,
+      "delta": 0.042346279252067805,
+      "bootstrap_95_ci": [0.029741871923072996, 0.05576171798237173],
+      "improved": 188,
+      "worsened": 98,
+      "unchanged": 194,
+      "two_sided_sign_test_p": 1.1259703410302849e-07
+    },
+    "gold_doc_citation_rate": {
+      "n": 470,
+      "delta": 0.04042553191489362,
+      "bootstrap_95_ci": [0.02127659574468085, 0.06170212765957447],
+      "improved": 20,
+      "worsened": 1,
+      "unchanged": 449,
+      "two_sided_sign_test_p": 2.09808349609375e-05
+    },
+    "grounded_answer_proxy_rate": {
+      "n": 480,
+      "delta": 0.041666666666666664,
+      "bootstrap_95_ci": [0.010416666666666666, 0.07291666666666667],
+      "improved": 41,
+      "worsened": 21,
+      "unchanged": 418,
+      "two_sided_sign_test_p": 0.015134080997447081
+    },
+    "average_total_latency_ms": 2141.206464253657,
+    "average_generation_context_chars": 0.282
+  },
+  "repeatability_check": {
+    "description": "Two independent raw-order Qwen Plus runs on the same stratified 50 questions estimate generation variability.",
+    "answer_fact_token_recall_mean_delta": -0.006627928384202336,
+    "answer_fact_token_recall_mean_absolute_delta": 0.04226059248987065,
+    "gold_answer_token_f1_mean_delta": -0.005271812656393218,
+    "context_metric_delta": 0.0,
+    "interpretation": "The full paired enhancement gain is larger than the observed mean run-to-run drift; context gains are deterministic consequences of reordered truncation."
+  },
+  "blind_reference_judge": {
+    "model": "qwen-plus",
+    "selection": "100 stratified pairs including unanswerable questions",
+    "labels_balanced": true,
+    "candidate_as_A": 50,
+    "candidate_as_B": 50,
+    "successful_pairs": 100,
+    "errored_pairs": 0,
+    "baseline_wins": 18,
+    "candidate_wins": 34,
+    "ties": 48,
+    "baseline_scores": {
+      "correctness": 7.25,
+      "completeness": 6.84,
+      "directness": 7.3,
+      "primary_mean": 7.045
+    },
+    "candidate_scores": {
+      "correctness": 7.68,
+      "completeness": 7.52,
+      "directness": 7.56,
+      "primary_mean": 7.6
+    },
+    "limitation": "The judge is blinded and label-balanced, but uses the same model family as generation and is not a substitute for human calibration."
+  },
+  "rejected_variants": {
+    "hard_selection_only_48k": {
+      "sample_questions": 50,
+      "average_generation_context_chars": 3855.14,
+      "answer_fact_token_recall": 0.5249032290126571,
+      "context_fact_token_recall": 0.5499938031569251,
+      "gold_answer_token_f1": 0.42187137900004257,
+      "decision": "rejected because aggressive pruning removed supporting evidence"
+    },
+    "selected_document_sibling_expansion_48k": {
+      "sample_questions": 50,
+      "successful_questions": 49,
+      "average_generation_context_chars": 5655.959183673469,
+      "answer_fact_token_recall": 0.49661038612959235,
+      "context_fact_token_recall": 0.5885965440101659,
+      "gold_answer_token_f1": 0.39723627942537637,
+      "decision": "rejected because bounded same-document expansion did not recover quality"
+    },
+    "selected_first_with_fallback_24k": {
+      "sample_questions": 50,
+      "average_generation_context_chars": 15984.92,
+      "answer_fact_token_recall": 0.5179941211687505,
+      "context_fact_token_recall": 0.6924708447292548,
+      "gold_answer_token_f1": 0.4023260289885537,
+      "decision": "not selected because the lower enhancement input substantially reduced the gain"
+    }
+  },
+  "runtime_fixes": {
+    "dynamic_output_budget": {
+      "reproduction": "Three completeness questions repeatedly produced truncated JSON at 768 output tokens.",
+      "verification": "All three succeeded at 1536 tokens.",
+      "implementation": "Retry malformed or length-terminated structured output with a doubled budget, capped at 4096 tokens.",
+      "full_control_success": "500/500",
+      "full_candidate_success": "500/500"
+    },
+    "ineffective_change_reverted": {
+      "hypothesis": "Selector insufficient hints caused false refusals.",
+      "test": "The 29 insufficient-selector cases were rerun without the hint; all 11 answer-evaluable cases still refused, matching the raw control.",
+      "decision": "Do not keep the unverified hint-removal change."
+    }
+  },
+  "artifacts": {
+    "remote_root": "/srv/paismart-develop-experiment/repro-p0p1/full500",
+    "runtime_pipeline_script_sha256": "1242024031be6727555cb6aa8e482263ee4e48cdba6caa4b2fea68d0ea4aab4d",
+    "finalized_pipeline_script_sha256": "ef1226ea6e4d1de68172ae05715ead5e3bddc161e78f2719d68836f208a5a5bf",
+    "runtime_pair_judge_script_sha256": "474c1b4144c692771957060d3816e4a87cadc653d04215ad7f40e11f63b2513a",
+    "finalized_pair_judge_script_sha256": "77732119ff7ff9690c10c1857d577669ca595ee99fc85018db09196486b7511a",
+    "post_run_code_changes": "The finalized tools add Fast-mode defaulting, input/output collision checks, and resume signatures. Experiment prompts, explicit quality-mode arguments, scoring, and blind-judge logic are unchanged.",
+    "control_jsonl_sha256": "8ba0edbc79ff60876fa27c2287d345a47a6ebdb6701404608f67d58a0981f768",
+    "control_summary_sha256": "1e2988051789773ecccbb1069fbe67d1f1dfa424c7a338ea068a098cbf49f529",
+    "candidate_jsonl_sha256": "42e49c2ad1c93196589b80ce04af388e8057b203a0ad96edfc187439512d897c",
+    "candidate_summary_sha256": "34f3856c38f0cf6640fd3b0c40f0297eb853a0116cf2e2e9cb854eb3f52f33a8",
+    "judge_jsonl_sha256": "2822cdab2c05b66a8af7cdae66880c458a7eaabb28c737a70ef8d85a8ec1d32b",
+    "judge_summary_sha256": "5498d5072be89faec126cc221aaeccfafb204da359f99b3ba2b622d20badb1cc"
+  },
+  "decision": {
+    "accepted": true,
+    "default_cli_pipeline": "generate-only",
+    "quality_mode_pipeline": "enhance-generate",
+    "quality_mode_enhancement": "selected_first_with_original_fallback",
+    "hard_pruning_enabled": false,
+    "generation_model": "qwen-plus",
+    "local_small_model_used": false,
+    "tradeoff": "The quality mode improves answer, evidence, citation, and blinded semantic metrics without increasing the generation context budget, but adds about 2.14 seconds average latency and 5.04 million artifact-accounted tokens across 500 questions. It therefore requires explicit opt-in."
+  }
+}

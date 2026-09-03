@@ -39,6 +39,13 @@ Qwen2.5 Generator 的答案指标略降，DeepEval Correctness 为 `0.496 -> 0.4
 因此 P0 接受，P1 保留为可选实验链路，当前6000 Token配置不设为默认。完整记录见
 [`docs/A40_P0_P1_VALIDATION_2026-09-03.md`](docs/A40_P0_P1_VALIDATION_2026-09-03.md)。
 
+在同一批Java Evidence上下文上，进一步使用云端`qwen-plus`完成Evidence增强和答案生成。
+增强器只选择原始`S*`引用并将其前置，不改写证据，也不删除原始回退排序。在相同16K
+Generator Prompt预算下，500题Answer Fact Recall从50.09%提高到54.12%，Gold Answer
+F1从39.93%提高到43.54%，Gold Doc Citation从89.36%提高到93.40%。代价是平均增加约
+2.14秒和约504万Token，因此`generate-only`仍是默认Fast模式，`enhance-generate`作为
+显式Quality模式。见[完整实验](docs/QWEN_PLUS_ENHANCEMENT_GENERATION_2026-09-03.md)。
+
 ## 流程
 
 ```mermaid
@@ -78,6 +85,8 @@ config/elasticsearch-evidence-2048.json 带版本字段的 P1 兼容 mapping
 config/elasticsearch-evidence-2560.json Qwen3 原生维度 P1 对照 mapping
 results/                       已验证的固定 500 题实验 summary
 tools/qwen3_embedding_adapter.py  Qwen3原生2560维到历史2048维的显式兼容适配器
+tools/qwen_plus_rag_pipeline.py  Qwen Plus Evidence增强、生成与确定性代理评测
+tools/qwen_plus_pair_judge.py  Qwen Plus盲化成对辅助评审
 docs/                          架构、Evidence、复现、实验与面试说明
 ```
 
@@ -234,6 +243,46 @@ java -jar target/paismart-enterprise-rag.jar evaluate ... --retrieval-mode hybri
 最终四路还需开启 `keyword-bm25-enabled` 和 `english-bm25-enabled`。全量参数与结果
 见 [复现说明](docs/REPRODUCIBILITY.md)。
 
+## 6. Qwen Plus增强与生成
+
+密钥只从本机登录环境读取：
+
+```bash
+export DASHSCOPE_API_KEY=...
+```
+
+Fast模式只生成答案，也是CLI默认值：
+
+```bash
+python tools/qwen_plus_rag_pipeline.py \
+  --contexts runs/java-evidence-contexts.jsonl \
+  --output runs/qwen-plus-fast.jsonl \
+  --summary-output runs/qwen-plus-fast-summary.json \
+  --pipeline generate-only \
+  --model qwen-plus \
+  --generation-max-input-chars 16000
+```
+
+Quality模式先用Qwen Plus选择原始证据ID并前置，再由Qwen Plus生成；未选证据仍按原顺序回退：
+
+```bash
+python tools/qwen_plus_rag_pipeline.py \
+  --contexts runs/java-evidence-contexts.jsonl \
+  --output runs/qwen-plus-quality.jsonl \
+  --summary-output runs/qwen-plus-quality-summary.json \
+  --pipeline enhance-generate \
+  --model qwen-plus \
+  --enhance-max-input-chars 48000 \
+  --enhance-max-selected 8 \
+  --selection-expansion rerank \
+  --generation-max-input-chars 16000
+```
+
+长答案若触发`finish_reason=length`或不完整JSON，会自动扩大输出Token预算重试，最大4096。
+`--resume`会校验输入、Prompt、模型和预算签名，配置变化时拒绝混用旧行。500题Fast和
+Quality均达到500/500成功。完整参数、逐题配对、盲评与Token开销见
+[Qwen Plus实验记录](docs/QWEN_PLUS_ENHANCEMENT_GENERATION_2026-09-03.md)。
+
 ## 安全边界
 
 - 数据、模型、API Key、ES 索引均不提交 Git。
@@ -253,6 +302,7 @@ java -jar target/paismart-enterprise-rag.jar evaluate ... --retrieval-mode hybri
 - [数据格式](docs/DATA_FORMAT.md)
 - [P0/P1：配置、Manifest 与 EvidenceBuilder](docs/EVIDENCE_BUILDER.md)
 - [A40 P0/P1复现与500题验收](docs/A40_P0_P1_VALIDATION_2026-09-03.md)
+- [Qwen Plus增强与生成500题实验](docs/QWEN_PLUS_ENHANCEMENT_GENERATION_2026-09-03.md)
 - [完整实验记录](docs/EXPERIMENT_LOG.md)
 - [更大 Reranker 对照实验](docs/RERANKER_EXPERIMENT_2026-08-27.md)
 - [Multi-Chunk / Parent-Child Reranker 实验](docs/MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md)

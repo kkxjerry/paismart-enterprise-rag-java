@@ -38,8 +38,27 @@ Importer 每批输出一行 JSON 进度。checkpoint schema 当前为 `version=2
 索引、模型、维度、Embedding API format、query instruction 和 Chunk 参数。不要在导入
 中途删除 checkpoint，除非改用一个全新索引重新开始。
 
-原生 2560 维与历史 2048 维必须使用不同索引。当前 vLLM 不接受任意修改输出维度；复用
-2048 索引时必须经过显式适配器，不能只把 CLI 的 `embedding_dimension` 改成 2048。
+原生 2560 维与历史 2048 维必须使用不同索引。A40实测 vLLM 0.17.0 对
+`dimensions=2048` 返回 HTTP 400，Java local 请求里的 `dimension=2048` 则被忽略并仍
+返回2560维。复用2048索引时必须经过显式适配器，不能只修改CLI参数：
+
+```bash
+vllm serve /opt/models/Qwen3-Embedding-4B \
+  --runner pooling \
+  --served-model-name Qwen/Qwen3-Embedding-4B \
+  --host 127.0.0.1 \
+  --port 18085 \
+  --max-model-len 8192
+
+python tools/qwen3_embedding_adapter.py \
+  --host 127.0.0.1 \
+  --port 18084 \
+  --upstream-url http://127.0.0.1:18085/v1/embeddings \
+  --target-dimension 2048
+```
+
+适配器明确执行前2048维截取和L2归一化。其纯函数测试可用
+`python -m unittest tools.test_qwen3_embedding_adapter` 运行。
 
 ## P0 配置驱动
 
@@ -57,7 +76,8 @@ java -jar target/paismart-enterprise-rag.jar evaluate \
   --config config/experiments/enterpriserag-qwen3-native2560-evidence-v1.json
 ```
 
-原生对照尚未运行，不得把配置文件的存在当成实验结果。
+原生对照尚未运行，不得把配置文件的存在当成实验结果。2048维P0/P1全量验收已经完成，
+结果与决策见 [`A40_P0_P1_VALIDATION_2026-09-03.md`](A40_P0_P1_VALIDATION_2026-09-03.md)。
 
 运行会写 `summary`、`details`、`contexts` 和 `manifest`。Manifest 中的输入 SHA-256、
 Git commit、最终参数和实际 ES mapping 应作为一次正式实验的身份，而不是只依赖输出文件名。
@@ -116,3 +136,6 @@ Qwen query instruction=Given an enterprise search query, retrieve relevant passa
 8. 配置、输入和输出路径必须隔离，输出不得覆盖问题、文档、ACL、mapping 或 ExperimentConfig。
 9. 延迟比较需说明本地 GPU还是远程 API，以及是否预热。
 10. 2048 兼容实验与原生 2560 对照必须分别报告，不能只写“Qwen3 维度”。
+11. Elasticsearch `_reindex` 会重建 ANN 图，不能保证逐题排名冻结；对既有向量索引做
+    Evidence A/B 时，应使用段级 clone，或在索引变更后重新运行并冻结双方共同控制组。
+12. Context Recall提高不等于答案质量提高；必须同时报告固定Generator和Judge结果。

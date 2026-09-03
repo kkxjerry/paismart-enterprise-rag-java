@@ -18,9 +18,11 @@ P1：四路代表 Chunk 留存
     + 版本冲突显式标记
 ```
 
-这次实现没有修改文档级 weighted RRF 排名，因此不会把 Evidence 选择误算成检索提升。
-当前 `98.09% Hit@10` 仍是历史四路检索基线；新的 Evidence 指标和最终回答 Correctness
-必须在 A40 完成固定 500 题重跑后再报告。
+A40固定500题验收已经完成。六项已报告缺陷均在修复前提交 `b9bd312` 复现，并在
+`035a7d9` 验证修复，结果为 `6/6`。EvidenceBuilder 与稳定控制组的 Top50 文档排名
+500/500逐题一致，ACL越界为0。它提高了 Evidence Recall，但没有提高固定 Generator 的
+最终答案质量，因此实现保留为可选实验链路，当前6000 Token配置不设为默认。完整结果见
+[`A40_P0_P1_VALIDATION_2026-09-03.md`](A40_P0_P1_VALIDATION_2026-09-03.md)。
 
 ## P0：一个配置真正驱动一次运行
 
@@ -304,21 +306,19 @@ avg/p95_latency_ms
 `document_miss_to_hit_count` 固定为 `0`，用于明确 P1 没有偷偷重排文档。Evidence 层的
 事实增减由固定排名下的 context A/B 单独比较。
 
-A40 验收应同时比较：
+A40在相同检索排名、相同Generator和相同问题集下完成了正式A/B：
 
 ```text
-历史 lexical_multi_chunk
-Java EvidenceBuilder
-
-Evidence fact recall
-Evidence fact coverage
-固定 Generator 下的 DeepEval Correctness
-ACL leak
-平均上下文 Token
-Evidence P95 与总 P95
+Context fact recall：71.99% -> 73.24%
+Context fact coverage：79.70% -> 81.15%
+平均Prompt字符：17,196 -> 23,957
+Evidence平均延迟：+208.29 ms
+Qwen2.5配对答案Fact Recall：40.79% -> 40.30%
+DeepEval Correctness同题50题：0.496 -> 0.494
 ```
 
-只有在相同检索排名、相同 Generator、相同问题集下，才能把差异归因给 EvidenceBuilder。
+因此证据覆盖提升成立，但“最终答案稳定提升”不成立。当前大预算配置不作为默认，后续只能
+通过更小预算或低置信条件触发继续验证。
 
 ## 本阶段明确不做
 
@@ -329,7 +329,7 @@ Evidence P95 与总 P95
 不做 BGE parent-child
 不改变文档级 RRF 排名
 不自动裁决冲突版本
-不宣称 500 题指标已经提升
+不把 Evidence Recall 提升误写成最终答案质量提升
 ```
 
 低置信路由和 bounded parent-child rerank 属于 P2。

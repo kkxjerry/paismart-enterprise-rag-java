@@ -32,8 +32,12 @@
 - **P1 Java EvidenceBuilder**：保持文档排名不变，保留四条路线命中的代表 Chunk，再对
   Top 文档做有界的文档内检索，按互补性和 Token 预算输出 Chunk 级引用。
 
-P0/P1 已通过单元测试，但尚未在 A40 对固定 500 题完成新的 Evidence 全量重跑，因此本仓库
-不会提前声称最终回答质量已经提升；`98.09%` 仍是原四路文档检索基线。
+P0/P1 已在 A40 完成固定 500 题验收。六项已报告缺陷均先在修复前提交复现，再验证对应
+修复，结果为 `6/6`。Java EvidenceBuilder 保持500题 Top50 文档排名逐题不变，ACL越界为0；
+同口径 Context fact recall 从71.99%提高到73.24%，但平均 Prompt 增加约39%，固定
+Qwen2.5 Generator 的答案指标略降，DeepEval Correctness 为 `0.496 -> 0.494`。
+因此 P0 接受，P1 保留为可选实验链路，当前6000 Token配置不设为默认。完整记录见
+[`docs/A40_P0_P1_VALIDATION_2026-09-03.md`](docs/A40_P0_P1_VALIDATION_2026-09-03.md)。
 
 ## 流程
 
@@ -73,6 +77,7 @@ config/elasticsearch-2048.json 历史 2048 维 ES mapping 快照
 config/elasticsearch-evidence-2048.json 带版本字段的 P1 兼容 mapping
 config/elasticsearch-evidence-2560.json Qwen3 原生维度 P1 对照 mapping
 results/                       已验证的固定 500 题实验 summary
+tools/qwen3_embedding_adapter.py  Qwen3原生2560维到历史2048维的显式兼容适配器
 docs/                          架构、Evidence、复现、实验与面试说明
 ```
 
@@ -103,7 +108,33 @@ vllm serve /opt/models/Qwen3-Embedding-4B \
 当前实际验证的 vLLM 版本是 `0.17.0`。Qwen3-Embedding-4B 原生输出为 2560 维；
 直接使用上述服务时，应创建 2560 维索引。历史 `98.09%` 基线使用已有 2048 维兼容索引，
 若继续复用该索引，Embedding 服务前必须显式执行“前 2048 维截取 + L2 归一化”，并由
-实验配置记录这个转换，不能把 2048 维误写成模型原生输出。
+实验配置记录这个转换，不能把 2048 维误写成模型原生输出。A40 已验证原生 vLLM 对
+`dimensions=2048` 返回 HTTP 400，而 Java 的 `dimension=2048` 字段会被忽略并返回2560维。
+
+历史2048维兼容路径使用仓库内的显式适配器：
+
+```bash
+# 原生2560维服务
+vllm serve /opt/models/Qwen3-Embedding-4B \
+  --runner pooling \
+  --served-model-name Qwen/Qwen3-Embedding-4B \
+  --host 127.0.0.1 \
+  --port 18085 \
+  --max-model-len 8192
+
+# 对外提供2048维兼容响应
+python tools/qwen3_embedding_adapter.py \
+  --host 127.0.0.1 \
+  --port 18084 \
+  --upstream-url http://127.0.0.1:18085/v1/embeddings \
+  --target-dimension 2048
+```
+
+适配器只支持 float embedding，并明确执行 `first_2048_then_l2_normalize`。验证：
+
+```bash
+python -m unittest tools.test_qwen3_embedding_adapter
+```
 
 ## 3. 用 sample 跑完整链路
 
@@ -221,6 +252,7 @@ java -jar target/paismart-enterprise-rag.jar evaluate ... --retrieval-mode hybri
 - [架构与代码入口](docs/ARCHITECTURE.md)
 - [数据格式](docs/DATA_FORMAT.md)
 - [P0/P1：配置、Manifest 与 EvidenceBuilder](docs/EVIDENCE_BUILDER.md)
+- [A40 P0/P1复现与500题验收](docs/A40_P0_P1_VALIDATION_2026-09-03.md)
 - [完整实验记录](docs/EXPERIMENT_LOG.md)
 - [更大 Reranker 对照实验](docs/RERANKER_EXPERIMENT_2026-08-27.md)
 - [Multi-Chunk / Parent-Child Reranker 实验](docs/MULTICHUNK_RERANKER_EXPERIMENT_2026-08-27.md)

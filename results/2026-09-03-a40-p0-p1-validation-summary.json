@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "run_date": "2026-09-03",
+  "environment": {
+    "host": "a40-48g-3",
+    "java": "17.0.19",
+    "elasticsearch": "8.10.4",
+    "vllm": "0.17.0",
+    "deepeval": "4.1.8",
+    "code_commit_under_test": "035a7d9a395f4450c78f3cc4ec0bb9b0010d5eda"
+  },
+  "dataset": {
+    "name": "onyx-dot-app/EnterpriseRAG-Bench",
+    "documents": 10722,
+    "indexed_chunks": 115406,
+    "questions_total": 500,
+    "questions_evaluable": 470,
+    "questions_no_gold": 30,
+    "documents_sha256": "72744bf266042fd675221795be501dd2d062ee5789fb24e23bb40ac5456c5f3b",
+    "questions_sha256": "0a9542fe3bef39fb668f46491a59b93ebf939f8c441bc132550292d2b22dd3d1",
+    "acl_documents_sha256": "e1900ff6567bdf484bd22fade263a0ed495a0476f4443c07e6a35d837bcb244a"
+  },
+  "bug_reproduction": {
+    "pre_fix_commit": "b9bd312",
+    "reproduced": 6,
+    "total": 6,
+    "items": [
+      "no-gold questions emitted evidence-answer scores",
+      "prefix token truncation removed query evidence near a chunk tail",
+      "stale versions within one doc_id were not marked as conflicts",
+      "outputs could overwrite declared inputs or the experiment config",
+      "a same-dimensional index created by another embedding model was accepted",
+      "RunManifest treated unknown Git state as clean and omitted untracked/output hashes"
+    ],
+    "a40_log": "/srv/paismart-develop-experiment/repro-p0p1/b9bd312/a40-bug-reproduction.log",
+    "a40_log_sha256": "a1691b2ae0e919461c9c562e2cdf735feccab5ccc076ada2ed28f2f88030b30c"
+  },
+  "fix_verification": {
+    "fixed_commit": "035a7d9",
+    "verified": 6,
+    "total": 6,
+    "a40_log": "/srv/paismart-develop-experiment/repro-p0p1/035a7d9/a40-fix-verification.log",
+    "a40_log_sha256": "a2cbc34449348b695e0fd7a26bdf71725a6ffed80d5e6ea7007142a7e715b72a"
+  },
+  "embedding_compatibility": {
+    "model": "Qwen/Qwen3-Embedding-4B",
+    "native_dimension": 2560,
+    "historical_stored_dimension": 2048,
+    "native_vllm_dimensions_2048_request": "HTTP 400",
+    "native_vllm_java_dimension_field_result": 2560,
+    "accepted_adapter": "tools/qwen3_embedding_adapter.py",
+    "adapter_transform": "first_2048_then_l2_normalize"
+  },
+  "retrieval_control": {
+    "historical_index": "knowledge_base_benchmark_qwen3_4b_2048_v1",
+    "segment_clone_index": "knowledge_base_benchmark_qwen3_4b_2048_evidence_clone_20260903_v1",
+    "exact_top50_ranking_match": "500/500",
+    "hit_at_1": 0.8914893617021277,
+    "hit_at_5": 0.9595744680851064,
+    "hit_at_10": 0.9808510638297873,
+    "hit_at_20": 0.9808510638297873,
+    "mrr_at_10": 0.9219140493076664,
+    "all_expected_docs_hit_at_10": 0.9234042553191489,
+    "source_filter_violation_count": 0
+  },
+  "java_evidence_builder": {
+    "document_ranking_changed": 0,
+    "document_hit_to_miss": 0,
+    "document_miss_to_hit": 0,
+    "evidence_source_filter_violation_count": 0,
+    "evidence_fact_token_recall_internal": 0.828070023529944,
+    "evidence_fact_coverage_internal": 0.9355581571020011,
+    "evidence_gold_answer_token_recall_internal": 0.8275230447203251,
+    "avg_evidence_tokens_internal": 4504.95,
+    "avg_evidence_spans": 29.14,
+    "avg_evidence_candidate_chunks": 63.424,
+    "avg_retrieval_latency_ms": 259.828545076,
+    "p95_retrieval_latency_ms": 387.323031,
+    "avg_evidence_latency_ms": 208.294542854,
+    "p95_evidence_latency_ms": 267.644636,
+    "avg_total_latency_ms": 477.981659194,
+    "p95_total_latency_ms": 661.174189
+  },
+  "same_metric_context_ab_470": {
+    "prompt_char_limit": 24000,
+    "lexical_multi_chunk": {
+      "fact_token_recall": 0.7199496156740999,
+      "fact_coverage": 0.7969520689690477,
+      "gold_answer_token_recall": 0.7321031779523812,
+      "avg_prompt_chars": 17196.134042553193,
+      "avg_context_count": 10.0
+    },
+    "java_evidence_builder": {
+      "fact_token_recall": 0.7324457412704931,
+      "fact_coverage": 0.8114867943879658,
+      "gold_answer_token_recall": 0.7414053916733084,
+      "avg_prompt_chars": 23956.7085106383,
+      "avg_context_count": 29.093617021276597
+    }
+  },
+  "fixed_generator_paired_492": {
+    "model": "Qwen/Qwen2.5-VL-3B-Instruct",
+    "temperature": 0,
+    "prompt_char_limit": 24000,
+    "old": {
+      "answer_fact_token_recall": 0.40788404421443636,
+      "answer_fact_coverage": 0.2852588440579917,
+      "gold_answer_token_f1": 0.3551587693327017,
+      "context_fact_token_recall": 0.7198310291663061,
+      "context_fact_coverage": 0.7986026529945597,
+      "citation_coverage": 0.9715447154471545,
+      "gold_doc_citation_rate": 0.7378048780487805,
+      "grounded_answer_proxy": 0.19308943089430894,
+      "avg_generation_latency_ms": 2298.1876260884924,
+      "avg_prompt_chars": 17223.87398373984
+    },
+    "new": {
+      "answer_fact_token_recall": 0.40295238389393756,
+      "answer_fact_coverage": 0.27490139018888526,
+      "gold_answer_token_f1": 0.34859966288900557,
+      "context_fact_token_recall": 0.7325297128594781,
+      "context_fact_coverage": 0.812934547656053,
+      "citation_coverage": 1.0,
+      "gold_doc_citation_rate": 0.8089430894308943,
+      "grounded_answer_proxy": 0.18495934959349594,
+      "avg_generation_latency_ms": 3017.3931849147457,
+      "avg_prompt_chars": 23958.64430894309
+    },
+    "structured_output_note": "Both 500-row runs retained four malformed-JSON errors after retries; paired metrics use the 492 rows that succeeded on both sides."
+  },
+  "deepeval_correctness_paired_50": {
+    "judge": "Qwen/Qwen3.5-9B",
+    "disable_thinking": true,
+    "threshold": 0.5,
+    "old_score_avg": 0.496,
+    "new_score_avg": 0.494,
+    "old_pass_rate": 0.46,
+    "new_pass_rate": 0.48,
+    "improved": 9,
+    "worsened": 10,
+    "unchanged": 31,
+    "judge_errors": 0,
+    "selection_qids_sha256": "2459e813f1782051a24491cf051ec7756db97c7ac23f3aa371818d5f3a25ef76"
+  },
+  "decision": {
+    "p0": "accepted",
+    "p1_implementation": "accepted_as_optional_experimental_path",
+    "p1_current_6000_token_configuration": "rejected_as_default",
+    "reason": "Evidence recall and gold-document citation improved, but answer quality did not improve, DeepEval was flat, and context and latency increased materially."
+  },
+  "artifacts": {
+    "remote_root": "/srv/paismart-develop-experiment/repro-p0p1/full500/runs",
+    "java_evidence_summary_sha256": "61bcdc83d98e04cbb069cdd61bdcddf2f949552d9fd054867f4e52cd9d2664b8",
+    "java_evidence_details_sha256": "5b3827539161661058fb6ef5e7a310a57f6777d77d3c9d4b65ef011593d08e6c",
+    "java_evidence_contexts_sha256": "876bfcdeb98d593ae3b03cbbcc5c7e9006dc28c878341fad678f4ecf16ce6bd2",
+    "java_evidence_manifest_sha256": "ea093c32ad67edb08d8e398e795f04347c08a9005de5b552bb73f04131a40781",
+    "qwen25_old_output_sha256": "c7fb5501d5655e908edf0d8d95333bae4bf5e0d865a9fe3a0fc5fa3944ee7f4f",
+    "qwen25_new_output_sha256": "61d206f7509fbd48851f8068a63fba9cedb14918ef9c0907819bc895abfd768b",
+    "deepeval_old_output_sha256": "d0c29a9dbaef8965efb7af3d5c754db5be9d6e956c3f0ff25ca58d5cfbf55493",
+    "deepeval_new_output_sha256": "2f530b78cb9db11f494fd0c804cd95691f854463a398792e13158d56f0fbc8ad"
+  }
+}

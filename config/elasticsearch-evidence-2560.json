@@ -14,7 +14,7 @@
   "mappings": {
     "dynamic": "strict",
     "_meta": {
-      "schema_version": "2-qwen3-embedding-4b-2560-bm25-english-evidence",
+      "schema_version": "3-qwen3-embedding-4b-2560-adaptive-lifecycle",
       "dataset": "onyx-dot-app/EnterpriseRAG-Bench",
       "embedding_model": "Qwen/Qwen3-Embedding-4B",
       "embedding_dimension": 2560,
@@ -24,6 +24,13 @@
     "properties": {
       "benchmarkDocId": { "type": "keyword" },
       "chunkId": { "type": "integer" },
+      "chunkKind": { "type": "keyword" },
+      "sectionPath": { "type": "keyword", "ignore_above": 1024 },
+      "speaker": { "type": "keyword" },
+      "threadId": { "type": "keyword" },
+      "eventTime": { "type": "date", "ignore_malformed": true },
+      "chunkingStrategy": { "type": "keyword" },
+      "chunkingFingerprint": { "type": "keyword" },
       "title": {
         "type": "text",
         "analyzer": "standard",
@@ -60,6 +67,7 @@
       "classification": { "type": "keyword" },
       "allowedGroupIds": { "type": "keyword" },
       "deniedGroupIds": { "type": "keyword" },
+      "aclHash": { "type": "keyword" },
       "vector": {
         "type": "dense_vector",
         "dims": 2560,
@@ -69,8 +77,12 @@
       "modelVersion": { "type": "keyword" },
       "documentVersion": { "type": "keyword" },
       "documentHash": { "type": "keyword" },
+      "documentGeneration": { "type": "keyword" },
+      "documentChunkCount": { "type": "integer" },
       "sourceUpdatedAt": { "type": "date", "ignore_malformed": true },
       "contentHash": { "type": "keyword" },
+      "sourceRevision": { "type": "keyword" },
+      "deletedAt": { "type": "date", "ignore_malformed": true },
       "indexedAt": { "type": "date" }
     }
   }

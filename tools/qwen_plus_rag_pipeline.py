@@ -89,6 +89,25 @@ class PipelineError(RuntimeError):
     """Raised for a retryable or terminal pipeline validation failure."""
 
 
+class QwenRequestError(PipelineError):
+    """Terminal model error that preserves consumed usage and latency."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: dict[str, int],
+        latency_ms: float,
+        attempts: int,
+        max_tokens_used: int,
+    ) -> None:
+        super().__init__(message)
+        self.usage = dict(usage)
+        self.latency_ms = float(latency_ms)
+        self.attempts = int(attempts)
+        self.max_tokens_used = int(max_tokens_used)
+
+
 @dataclass(frozen=True)
 class ApiResult:
     value: dict[str, Any]
@@ -131,7 +150,16 @@ class QwenClient:
         current_max_tokens = max_tokens
         cumulative_usage = zero_usage()
         total_latency_ms = 0.0
+        attempts_made = 0
+        deadline = time.monotonic() + self.timeout_seconds
         for attempt in range(1, self.retries + 2):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                last_error = TimeoutError(
+                    f"Qwen request exceeded total deadline of {self.timeout_seconds}s"
+                )
+                break
+            attempts_made = attempt
             started = time.perf_counter()
             try:
                 payload = {
@@ -150,7 +178,7 @@ class QwenClient:
                     },
                     method="POST",
                 )
-                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                with urllib.request.urlopen(request, timeout=max(1.0, remaining)) as response:
                     response_payload = json.load(response)
                     request_id = response.headers.get("x-request-id", "")
                 latency_ms = (time.perf_counter() - started) * 1000.0
@@ -200,8 +228,18 @@ class QwenClient:
                 if attempt > self.retries:
                     break
             delay = min(20.0, 0.75 * (2 ** (attempt - 1))) + random.random() * 0.25
-            time.sleep(delay)
-        raise PipelineError(f"Qwen request failed after {self.retries + 1} attempts: {last_error}")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(delay, remaining))
+        raise QwenRequestError(
+            f"Qwen request failed after {attempts_made} attempts within "
+            f"{self.timeout_seconds}s: {last_error}",
+            usage=cumulative_usage,
+            latency_ms=total_latency_ms,
+            attempts=attempts_made,
+            max_tokens_used=current_max_tokens,
+        )
 
 
 def parse_json_object(content: str) -> dict[str, Any]:

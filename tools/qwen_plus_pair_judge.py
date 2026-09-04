@@ -162,9 +162,11 @@ def judge(pair: dict[str, Any], client: QwenClient, max_tokens: int) -> dict[str
             "labels": labels,
             "winner": None,
             "scores": {},
-            "latency_ms": (time.perf_counter() - started) * 1000,
-            "usage": {},
-            "attempts": 0,
+            "latency_ms": float(
+                getattr(exc, "latency_ms", (time.perf_counter() - started) * 1000)
+            ),
+            "usage": dict(getattr(exc, "usage", {})),
+            "attempts": int(getattr(exc, "attempts", 0)),
             "error": str(exc),
         }
 
@@ -207,7 +209,15 @@ def summary(rows: list[dict[str, Any]], args: argparse.Namespace, eligible: int)
         "wins": {name: sum(row["winner"] == name for row in ok) for name in ("baseline", "candidate", "tie")},
         "scores": scores,
         "usage": {
-            key: sum(int((row.get("usage") or {}).get(key) or 0) for row in ok)
+            key: sum(int((row.get("usage") or {}).get(key) or 0) for row in rows)
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
+        },
+        "failed_attempt_usage": {
+            key: sum(
+                int((row.get("usage") or {}).get(key) or 0)
+                for row in rows
+                if row.get("error")
+            )
             for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
         },
         "by_question_type": by_type,

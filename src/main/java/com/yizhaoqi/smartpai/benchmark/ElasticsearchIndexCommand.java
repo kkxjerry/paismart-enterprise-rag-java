@@ -58,7 +58,7 @@ public final class ElasticsearchIndexCommand {
         ObjectNode mappings = root.putObject("mappings");
         mappings.put("dynamic", "strict");
         ObjectNode meta = mappings.putObject("_meta");
-        meta.put("schema_version", "2-enterpriserag-java-evidence");
+        meta.put("schema_version", "3-enterpriserag-adaptive-lifecycle");
         meta.put("dataset", "onyx-dot-app/EnterpriseRAG-Bench");
         meta.put("embedding_model", config.embeddingModel());
         meta.put("embedding_dimension", config.embeddingDimension());
@@ -68,6 +68,13 @@ public final class ElasticsearchIndexCommand {
         ObjectNode properties = mappings.putObject("properties");
         keyword(properties, "benchmarkDocId");
         properties.putObject("chunkId").put("type", "integer");
+        keyword(properties, "chunkKind");
+        properties.putObject("sectionPath").put("type", "keyword").put("ignore_above", 1024);
+        keyword(properties, "speaker");
+        keyword(properties, "threadId");
+        properties.putObject("eventTime").put("type", "date").put("ignore_malformed", true);
+        keyword(properties, "chunkingStrategy");
+        keyword(properties, "chunkingFingerprint");
         text(properties, "title", true);
         text(properties, "textContent", false);
         keyword(properties, "sourceType");
@@ -77,6 +84,7 @@ public final class ElasticsearchIndexCommand {
         keyword(properties, "classification");
         keyword(properties, "allowedGroupIds");
         keyword(properties, "deniedGroupIds");
+        keyword(properties, "aclHash");
         ObjectNode vector = properties.putObject("vector");
         vector.put("type", "dense_vector");
         vector.put("dims", config.embeddingDimension());
@@ -85,8 +93,12 @@ public final class ElasticsearchIndexCommand {
         keyword(properties, "modelVersion");
         keyword(properties, "documentVersion");
         keyword(properties, "documentHash");
+        keyword(properties, "documentGeneration");
+        properties.putObject("documentChunkCount").put("type", "integer");
         properties.putObject("sourceUpdatedAt").put("type", "date").put("ignore_malformed", true);
         keyword(properties, "contentHash");
+        keyword(properties, "sourceRevision");
+        properties.putObject("deletedAt").put("type", "date").put("ignore_malformed", true);
         properties.putObject("indexedAt").put("type", "date");
         return root;
     }

@@ -32,7 +32,7 @@ import java.util.concurrent.Future;
 public final class EnterpriseRagImporter {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final int CHECKPOINT_VERSION = 2;
+    private static final int CHECKPOINT_VERSION = 3;
 
     private EnterpriseRagImporter() {
     }
@@ -71,6 +71,8 @@ public final class EnterpriseRagImporter {
         summary.put("index", config.index());
         summary.put("embedding_model", config.embeddingModel());
         summary.put("embedding_dimension", config.embeddingDimension());
+        summary.put("chunking_strategy", config.chunkingStrategy());
+        summary.put("source_aware_types", config.sourceAwareTypes().stream().sorted().toList());
         summary.put("documents_processed", state.documentsProcessed());
         summary.put("chunks_indexed", state.chunksIndexed());
         summary.put("batches_completed", state.batchesCompleted());
@@ -156,7 +158,7 @@ public final class EnterpriseRagImporter {
         saveCheckpoint(config.checkpoint(), state);
     }
 
-    private static List<List<Double>> embedAll(
+    static List<List<Double>> embedAll(
             Config config,
             EmbeddingClient embeddings,
             List<String> texts) throws Exception {
@@ -217,17 +219,46 @@ public final class EnterpriseRagImporter {
                     document.path("metadata").path("source_updated_at"),
                     document.path("metadata").path("updated_at"));
             String documentHash = sha256(title + "\n" + documentText);
-            AclDocument acl = aclByDocId.getOrDefault(docId, AclDocument.empty());
-            List<String> parts = TextChunker.chunk(
-                    documentText,
-                    config.chunkSize(),
-                    config.chunkOverlap());
+            AclDocument acl = aclByDocId.get(docId);
+            if (acl == null) {
+                if (config.failOnMissingAcl()) {
+                    throw new IllegalArgumentException("missing ACL for document " + docId);
+                }
+                acl = AclDocument.empty();
+            }
+            String aclHash = acl.hash();
+            String sourceRevision = firstText(
+                    document.path("source_revision"),
+                    document.path("revision"),
+                    document.path("metadata").path("source_revision"),
+                    document.path("metadata").path("revision"));
+            List<SourceAwareChunker.Segment> parts = segmentsForDocument(
+                    config,
+                    sourceType,
+                    title,
+                    documentText);
+            String chunkingFingerprint = chunkingFingerprint(config);
+            String documentGeneration = documentGeneration(
+                    documentHash,
+                    chunkingFingerprint,
+                    config.embeddingModel(),
+                    sourceType);
             for (int index = 0; index < parts.size(); index++) {
-                String text = parts.get(index);
+                SourceAwareChunker.Segment part = parts.get(index);
+                String text = part.text();
                 int chunkId = index + 1;
                 ObjectNode source = MAPPER.createObjectNode();
                 source.put("benchmarkDocId", docId);
                 source.put("chunkId", chunkId);
+                source.put("chunkKind", part.kind());
+                source.put("sectionPath", part.sectionPath());
+                source.put("speaker", part.speaker());
+                source.put("threadId", part.threadId());
+                if (!part.eventTime().isBlank()) {
+                    source.put("eventTime", part.eventTime());
+                }
+                source.put("chunkingStrategy", config.chunkingStrategy());
+                source.put("chunkingFingerprint", chunkingFingerprint);
                 source.put("title", title);
                 source.put("textContent", text);
                 source.put("sourceType", sourceType);
@@ -237,13 +268,19 @@ public final class EnterpriseRagImporter {
                 source.put("classification", acl.classification());
                 source.set("allowedGroupIds", MAPPER.valueToTree(acl.allowedGroupIds()));
                 source.set("deniedGroupIds", MAPPER.valueToTree(acl.deniedGroupIds()));
+                source.put("aclHash", aclHash);
                 source.put("modelVersion", config.embeddingModel());
                 source.put("documentHash", documentHash);
+                source.put("documentGeneration", documentGeneration);
+                source.put("documentChunkCount", parts.size());
                 if (!documentVersion.isBlank()) {
                     source.put("documentVersion", documentVersion);
                 }
                 if (!sourceUpdatedAt.isBlank()) {
                     source.put("sourceUpdatedAt", sourceUpdatedAt);
+                }
+                if (!sourceRevision.isBlank()) {
+                    source.put("sourceRevision", sourceRevision);
                 }
                 source.put("contentHash", sha256(text));
                 source.put("indexedAt", indexedAt);
@@ -253,7 +290,47 @@ public final class EnterpriseRagImporter {
         return chunks;
     }
 
-    private static void bulkIndex(Config config, JsonHttpClient http, List<Chunk> chunks) throws Exception {
+    static List<SourceAwareChunker.Segment> segmentsForDocument(
+            Config config,
+            String sourceType,
+            String title,
+            String documentText) {
+        String normalizedSource = sourceType == null ? "" : sourceType.toLowerCase(java.util.Locale.ROOT);
+        boolean structured = "source-aware".equals(config.chunkingStrategy())
+                && (config.sourceAwareTypes().isEmpty() || config.sourceAwareTypes().contains(normalizedSource));
+        return structured
+                ? SourceAwareChunker.chunk(
+                        sourceType,
+                        title,
+                        documentText,
+                        config.chunkSize(),
+                        config.chunkOverlap())
+                : TextChunker.chunk(documentText, config.chunkSize(), config.chunkOverlap()).stream()
+                        .map(text -> new SourceAwareChunker.Segment(text, "body", title, "", "", ""))
+                        .toList();
+    }
+
+    static String chunkingFingerprint(Config config) {
+        if ("fixed".equals(config.chunkingStrategy())) {
+            return "fixed:" + config.chunkSize() + ":" + config.chunkOverlap();
+        }
+        String scope = config.sourceAwareTypes().isEmpty()
+                ? "*"
+                : String.join(",", config.sourceAwareTypes().stream().sorted().toList());
+        return config.chunkingStrategy() + "[" + scope + "]:"
+                + config.chunkSize() + ":" + config.chunkOverlap();
+    }
+
+    static String documentGeneration(
+            String documentHash,
+            String chunkingFingerprint,
+            String modelVersion,
+            String sourceType) {
+        return sha256(
+                documentHash + "\n" + chunkingFingerprint + "\n" + modelVersion + "\n" + sourceType);
+    }
+
+    static void bulkIndex(Config config, JsonHttpClient http, List<Chunk> chunks) throws Exception {
         for (int start = 0; start < chunks.size(); start += config.bulkSize()) {
             List<Chunk> batch = chunks.subList(start, Math.min(start + config.bulkSize(), chunks.size()));
             StringBuilder ndjson = new StringBuilder();
@@ -310,7 +387,7 @@ public final class EnterpriseRagImporter {
         return MAPPER.writeValueAsString(failures);
     }
 
-    private static Map<String, AclDocument> loadAcl(Path path) throws IOException {
+    static Map<String, AclDocument> loadAcl(Path path) throws IOException {
         Map<String, AclDocument> values = new LinkedHashMap<>();
         try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
             String line;
@@ -332,7 +409,7 @@ public final class EnterpriseRagImporter {
         return Map.copyOf(values);
     }
 
-    private static void validateIndex(JsonHttpClient http, Config config) throws Exception {
+    static void validateIndex(JsonHttpClient http, Config config) throws Exception {
         JsonNode mapping = http.requireJson(
                 "GET", baseUrl(config) + "/_mapping", null, "", 1, Duration.ofSeconds(30));
         JsonNode indexMapping = mapping.path(config.index());
@@ -353,15 +430,23 @@ public final class EnterpriseRagImporter {
         if (!"standard".equals(properties.path("textContent").path("analyzer").asText())) {
             throw new IllegalStateException("EnterpriseRAG textContent must use the standard analyzer");
         }
-        for (String field : List.of("documentVersion", "documentHash", "contentHash")) {
+        for (String field : List.of(
+                "documentVersion", "documentHash", "documentGeneration", "contentHash", "aclHash",
+                "chunkKind", "chunkingStrategy", "chunkingFingerprint", "sourceRevision")) {
             if (!"keyword".equals(properties.path(field).path("type").asText())) {
                 throw new IllegalStateException(
                         "EnterpriseRAG P1 index must map " + field + " as keyword");
             }
         }
-        if (!"date".equals(properties.path("sourceUpdatedAt").path("type").asText())) {
+        if (!"integer".equals(properties.path("documentChunkCount").path("type").asText())) {
             throw new IllegalStateException(
-                    "EnterpriseRAG P1 index must map sourceUpdatedAt as date");
+                    "EnterpriseRAG lifecycle index must map documentChunkCount as integer");
+        }
+        for (String field : List.of("sourceUpdatedAt", "eventTime", "deletedAt")) {
+            if (!"date".equals(properties.path(field).path("type").asText())) {
+                throw new IllegalStateException(
+                        "EnterpriseRAG lifecycle index must map " + field + " as date");
+            }
         }
     }
 
@@ -412,6 +497,9 @@ public final class EnterpriseRagImporter {
         signature.put("embedding_query_instruction", config.embeddingQueryInstruction());
         signature.put("chunk_size", config.chunkSize());
         signature.put("chunk_overlap", config.chunkOverlap());
+        signature.put("chunking_strategy", config.chunkingStrategy());
+        signature.put("source_aware_types", String.join(",", config.sourceAwareTypes().stream().sorted().toList()));
+        signature.put("fail_on_missing_acl", config.failOnMissingAcl());
         return signature;
     }
 
@@ -554,11 +642,22 @@ public final class EnterpriseRagImporter {
             int bulkSize,
             int chunkSize,
             int chunkOverlap,
+            String chunkingStrategy,
+            Set<String> sourceAwareTypes,
+            boolean failOnMissingAcl,
             int maxRetries,
             long maxDocuments,
             Path checkpoint,
             Path failureLog,
             Path output) {
+
+        Config {
+            sourceAwareTypes = sourceAwareTypes == null ? Set.of() : Set.copyOf(sourceAwareTypes);
+            if (!"source-aware".equals(chunkingStrategy) && !sourceAwareTypes.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "--source-aware-types requires --chunking-strategy source-aware");
+            }
+        }
 
         static Config parse(String[] args) {
             Arguments values = Arguments.parse(args);
@@ -588,11 +687,41 @@ public final class EnterpriseRagImporter {
                     values.positiveInt("bulk-size", 100),
                     values.positiveInt("chunk-size", 1200),
                     values.nonNegativeInt("chunk-overlap", 200),
+                    chunkingStrategy(values.string("chunking-strategy", "fixed")),
+                    sourceAwareTypes(values.string("source-aware-types", "")),
+                    values.bool("fail-on-missing-acl", true),
                     values.nonNegativeInt("max-retries", 3),
                     maxDocuments,
                     values.path("checkpoint", "runs/import-checkpoint.json"),
                     values.path("failure-log", "runs/import-failures.jsonl"),
                     outputValue.isBlank() ? null : Path.of(outputValue));
+        }
+
+        private static String chunkingStrategy(String value) {
+            if (!Set.of("fixed", "source-aware").contains(value)) {
+                throw new IllegalArgumentException("--chunking-strategy must be fixed or source-aware");
+            }
+            return value;
+        }
+
+        private static Set<String> sourceAwareTypes(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return Set.of();
+            }
+            Set<String> values = new java.util.HashSet<>();
+            for (String item : raw.split(",")) {
+                String sourceType = item.trim().toLowerCase(java.util.Locale.ROOT);
+                if (!sourceType.isBlank()) {
+                    values.add(sourceType);
+                }
+            }
+            Set<String> unsupported = new java.util.HashSet<>(values);
+            unsupported.removeAll(SourceAwareChunker.supportedTypes());
+            if (!unsupported.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "--source-aware-types contains unsupported values: " + unsupported);
+            }
+            return Set.copyOf(values);
         }
 
         EmbeddingClient.Config embeddingConfig() {
@@ -619,6 +748,13 @@ public final class EnterpriseRagImporter {
 
         static AclDocument empty() {
             return new AclDocument("", "", List.of(), List.of());
+        }
+
+        String hash() {
+            return sha256(
+                    tenantId + "\n" + classification + "\n"
+                            + String.join("\u001f", allowedGroupIds.stream().sorted().toList()) + "\n"
+                            + String.join("\u001f", deniedGroupIds.stream().sorted().toList()));
         }
     }
 

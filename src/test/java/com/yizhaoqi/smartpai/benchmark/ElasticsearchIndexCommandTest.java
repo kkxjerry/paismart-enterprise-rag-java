@@ -26,12 +26,20 @@ class ElasticsearchIndexCommandTest {
         assertThat(mapping.path("mappings").path("properties").path("vector").path("dims").asInt())
                 .isEqualTo(2048);
         assertThat(mapping.path("mappings").path("_meta").path("schema_version").asText())
-                .isEqualTo("2-enterpriserag-java-evidence");
+                .isEqualTo("3-enterpriserag-adaptive-lifecycle");
         assertThat(mapping.path("mappings").path("properties").path("documentVersion").path("type").asText())
                 .isEqualTo("keyword");
         assertThat(mapping.path("mappings").path("properties").path("documentHash").path("type").asText())
                 .isEqualTo("keyword");
         assertThat(mapping.path("mappings").path("properties").path("sourceUpdatedAt").path("type").asText())
+                .isEqualTo("date");
+        assertThat(mapping.path("mappings").path("properties").path("chunkKind").path("type").asText())
+                .isEqualTo("keyword");
+        assertThat(mapping.path("mappings").path("properties").path("chunkingFingerprint").path("type").asText())
+                .isEqualTo("keyword");
+        assertThat(mapping.path("mappings").path("properties").path("aclHash").path("type").asText())
+                .isEqualTo("keyword");
+        assertThat(mapping.path("mappings").path("properties").path("deletedAt").path("type").asText())
                 .isEqualTo("date");
     }
 }

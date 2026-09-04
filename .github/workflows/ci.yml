@@ -21,12 +21,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Test Python experiment tools
+      - name: Test Python tools
         run: >-
           python -m unittest
           tools.test_qwen3_embedding_adapter
           tools.test_qwen_plus_rag_pipeline
           tools.test_qwen_plus_pair_judge
+          tools.test_adaptive_rag_control
+          tools.test_adaptive_rag_api
+          tools.test_adaptive_rag_compare
       - name: Test and package
         run: mvn --batch-mode --update-snapshots verify
       - name: Check CLI

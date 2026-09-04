@@ -10,6 +10,7 @@ from tools.qwen_plus_rag_pipeline import (
     ApiResult,
     PipelineError,
     QwenClient,
+    QwenRequestError,
     expand_selected_contexts,
     load_resume,
     process_row,
@@ -149,6 +150,56 @@ class QwenPlusRagPipelineTest(unittest.TestCase):
         self.assertEqual(result.attempts, 2)
         self.assertEqual(result.max_tokens_used, 1536)
         self.assertEqual(result.usage["total_tokens"], 978)
+
+    def test_terminal_client_error_preserves_failed_attempt_usage(self) -> None:
+        class Response:
+            headers = {"x-request-id": "request-id"}
+
+            def __init__(self, total_tokens: int) -> None:
+                self.total_tokens = total_tokens
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "model": "qwen-flash",
+                        "choices": [{"finish_reason": "stop", "message": {"content": '{"ok":true}'}}],
+                        "usage": {
+                            "prompt_tokens": self.total_tokens - 10,
+                            "completion_tokens": 10,
+                            "total_tokens": self.total_tokens,
+                        },
+                    }
+                ).encode("utf-8")
+
+        responses = [Response(110), Response(120)]
+        client = QwenClient(
+            api_base="https://example.test/v1",
+            api_key="secret",
+            model="qwen-flash",
+            timeout_seconds=10,
+            retries=1,
+        )
+        with patch(
+            "tools.qwen_plus_rag_pipeline.urllib.request.urlopen",
+            side_effect=lambda *_args, **_kwargs: responses.pop(0),
+        ), patch("tools.qwen_plus_rag_pipeline.time.sleep", return_value=None):
+            with self.assertRaises(QwenRequestError) as raised:
+                client.complete_json(
+                    messages=[{"role": "user", "content": "test"}],
+                    max_tokens=128,
+                    temperature=0.0,
+                    validator=lambda _payload: (_ for _ in ()).throw(PipelineError("invalid")),
+                )
+
+        self.assertEqual(raised.exception.usage["total_tokens"], 230)
+        self.assertEqual(raised.exception.attempts, 2)
+        self.assertEqual(raised.exception.max_tokens_used, 512)
 
     def test_enhancement_rejects_unknown_or_excessive_citations(self) -> None:
         with self.assertRaisesRegex(PipelineError, "unknown citations"):

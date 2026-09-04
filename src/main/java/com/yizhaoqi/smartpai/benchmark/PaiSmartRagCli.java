@@ -16,6 +16,9 @@ public final class PaiSmartRagCli {
         switch (args[0]) {
             case "create-index" -> ElasticsearchIndexCommand.main(commandArgs);
             case "import" -> EnterpriseRagImporter.main(commandArgs);
+            case "sync" -> EnterpriseRagSynchronizer.main(commandArgs);
+            case "lifecycle" -> IndexLifecycleCommand.main(commandArgs);
+            case "serve-search" -> RagSearchServer.main(commandArgs);
             case "evaluate" -> EnterpriseRagJavaBenchmark.main(commandArgs);
             default -> throw new IllegalArgumentException("unknown command: " + args[0]);
         }
@@ -30,7 +33,10 @@ public final class PaiSmartRagCli {
 
                 Commands:
                   create-index  Create an isolated Elasticsearch benchmark index
-                  import        Chunk, embed, and bulk-index EnterpriseRAG JSONL documents
+                  import        Full chunk/embed/bulk import with fail-closed ACL handling
+                  sync          Incremental sync: skip unchanged, update ACL, remove stale/missing chunks
+                  lifecycle     Inspect or atomically promote a blue-green index alias
+                  serve-search  Authenticated tenant/ACL-aware online retrieval API
                   evaluate      Run retrieval and optional bounded Java EvidenceBuilder evaluation
 
                 Reproducible evaluation:

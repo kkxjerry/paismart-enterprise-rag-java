@@ -1,0 +1,114 @@
+{
+  "date": "2026-09-04",
+  "status": "implemented_and_acceptance_gated",
+  "scope": [
+    "per_question_failure_attribution",
+    "adaptive_fast_quality_deep_router",
+    "requirement_evidence_mapping",
+    "dynamic_evidence_budget",
+    "conditional_claim_citation_verifier",
+    "low_confidence_secondary_retrieval",
+    "source_aware_chunking",
+    "index_lifecycle_and_online_api"
+  ],
+  "model_policy": {
+    "optimization_model": "qwen-flash",
+    "acceptance_model": "qwen-plus",
+    "online_router_uses_benchmark_oracle": false
+  },
+  "flash_stratified_50_optimization": {
+    "fast_control": {
+      "answer_fact_token_recall": 0.4989,
+      "answer_fact_coverage": 0.3612,
+      "context_fact_token_recall": 0.6384,
+      "gold_answer_token_f1": 0.3772,
+      "unanswerable_abstain_accuracy": 0.8,
+      "avg_latency_seconds": 2.16
+    },
+    "adaptive_candidate": {
+      "router_counts": {
+        "fast": 36,
+        "quality": 12,
+        "deep": 2
+      },
+      "answer_fact_token_recall": 0.526,
+      "answer_fact_coverage": 0.4491,
+      "context_fact_token_recall": 0.6595,
+      "gold_answer_token_f1": 0.3903,
+      "unanswerable_abstain_accuracy": 1.0,
+      "avg_latency_seconds": 4.5
+    }
+  },
+  "full_acceptance": {
+    "flash_500": {
+      "questions": 500,
+      "status": "passed",
+      "requirements": [
+        "all_rows_completed",
+        "paired_answer_fact_recall_positive",
+        "paired_answer_fact_coverage_positive",
+        "citation_precision_1_0"
+      ]
+    },
+    "qwen_plus_500": {
+      "questions": 500,
+      "status": "passed",
+      "requirements": [
+        "all_rows_completed",
+        "paired_answer_fact_recall_positive",
+        "paired_answer_fact_coverage_positive",
+        "gold_answer_f1_non_regression",
+        "citation_precision_1_0",
+        "unanswerable_abstain_at_least_0_95",
+        "quality_and_deep_routes_at_most_200"
+      ]
+    },
+    "qwen_plus_blind_pair_judge": {
+      "questions": 100,
+      "status": "passed",
+      "requirements": [
+        "no_judge_errors",
+        "candidate_wins_more_than_baseline"
+      ]
+    }
+  },
+  "lifecycle_validation": {
+    "incremental_sync": "passed",
+    "unchanged_document_skips_embedding": "passed",
+    "acl_only_metadata_update": "passed",
+    "stale_chunk_cleanup": "passed",
+    "delete_propagation": "passed_with_explicit_tenant_scope_guard",
+    "alias_compare_and_set": "passed",
+    "partial_bulk_generation_recovery": "passed",
+    "mixed_generation_recovery": "passed",
+    "legacy_complete_generation_metadata_backfill": "passed",
+    "chunker_implementation_version_in_fingerprint": true,
+    "embedding_dimension_and_api_format_in_generation": true
+  },
+  "source_aware_chunking": {
+    "full_corpus_indexed": true,
+    "full_retrieval_and_evidence_evaluation_completed": true,
+    "default_enabled": false,
+    "reason": "kept as an opt-in index ablation until its own generator-level comparison is accepted"
+  },
+  "online_validation": {
+    "java_search_api": "passed",
+    "python_answer_api": "passed",
+    "acl_filtering": "passed",
+    "principal_isolated_cache": "passed",
+    "secondary_retrieval_inherits_principal": "passed"
+  },
+  "audit_artifacts": {
+    "local_root": "/tmp/adaptive_rag",
+    "a40_root": "/srv/paismart-develop-experiment/repro-adaptive-v1",
+    "acceptance": "/tmp/adaptive_rag/adaptive-final-acceptance.json",
+    "generation_recovery": "/srv/paismart-develop-experiment/repro-adaptive-v1/generation-recovery-v3/validation-summary.json",
+    "source_aware": "/srv/paismart-develop-experiment/repro-adaptive-v1/runs/sourceaware-comparison.json"
+  },
+  "notes": [
+    "The aggregate file records gates and durable decisions; per-question model outputs remain outside Git.",
+    "Source-aware chunking does not overwrite the historical fixed-chunk index.",
+    "Incremental bulk sync provides detectable and recoverable generations, not database-transaction atomic visibility.",
+    "The bearer API is intended for a trusted gateway; tenant and groups must not be accepted directly from an untrusted end user."
+  ]
+}

@@ -11,9 +11,10 @@ import com.yizhaoqi.smartpai.service.ReciprocalRankFusion;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
-import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -167,8 +168,31 @@ public final class EnterpriseRagJavaBenchmark {
     }
 
     static Result retrieve(HttpClient client, Config config, Question question) throws Exception {
+        return retrieveWithFilter(client, config, question, sourceAclFilter(question.sourceTypes()));
+    }
+
+    static Result retrieveOnline(
+            HttpClient client,
+            Config config,
+            String query,
+            ObjectNode filter) throws Exception {
+        Question question = new Question(
+                "online",
+                query,
+                List.of(),
+                List.of(),
+                "online",
+                "",
+                List.of());
+        return retrieveWithFilter(client, config, question, filter);
+    }
+
+    private static Result retrieveWithFilter(
+            HttpClient client,
+            Config config,
+            Question question,
+            ObjectNode filter) throws Exception {
         long started = System.nanoTime();
-        ObjectNode filter = sourceAclFilter(question.sourceTypes());
         List<RouteRanking> routes = new ArrayList<>();
 
         double embeddingMs = 0.0d;
@@ -449,6 +473,11 @@ public final class EnterpriseRagJavaBenchmark {
                 document.docId(),
                 document.chunkEsId(),
                 document.chunkId(),
+                document.chunkKind(),
+                document.sectionPath(),
+                document.speaker(),
+                document.threadId(),
+                document.eventTime(),
                 document.sourceType(),
                 document.sourcePath(),
                 document.title(),
@@ -654,6 +683,11 @@ public final class EnterpriseRagJavaBenchmark {
     private static void addSourceFields(ArrayNode fields) {
         fields.add("benchmarkDocId")
                 .add("chunkId")
+                .add("chunkKind")
+                .add("sectionPath")
+                .add("speaker")
+                .add("threadId")
+                .add("eventTime")
                 .add("title")
                 .add("textContent")
                 .add("sourceType")
@@ -685,6 +719,38 @@ public final class EnterpriseRagJavaBenchmark {
         return MAPPER.createObjectNode().set("bool", bool);
     }
 
+    static ObjectNode productionAclFilter(
+            SearchPrincipal principal,
+            List<String> sourceTypes) {
+        ObjectNode bool = MAPPER.createObjectNode();
+        ArrayNode filters = bool.putArray("filter");
+        filters.add(termQuery("tenantId", principal.tenantId()));
+        if (sourceTypes != null && !sourceTypes.isEmpty()) {
+            filters.add(termsQuery("sourceType", sourceTypes));
+        }
+        if (!principal.classifications().isEmpty()) {
+            filters.add(termsQuery("classification", principal.classifications()));
+        }
+
+        ObjectNode allowed = MAPPER.createObjectNode();
+        ArrayNode allowedShould = allowed.putArray("should");
+        if (!principal.groupIds().isEmpty()) {
+            allowedShould.add(termsQuery("allowedGroupIds", principal.groupIds()));
+        }
+        ObjectNode publicDocument = MAPPER.createObjectNode();
+        publicDocument.putArray("must_not").add(existsQuery("allowedGroupIds"));
+        allowedShould.add(MAPPER.createObjectNode().set("bool", publicDocument));
+        allowed.put("minimum_should_match", 1);
+        filters.add(MAPPER.createObjectNode().set("bool", allowed));
+
+        ArrayNode mustNot = bool.putArray("must_not");
+        if (!principal.groupIds().isEmpty()) {
+            mustNot.add(termsQuery("deniedGroupIds", principal.groupIds()));
+        }
+        mustNot.add(existsQuery("deletedAt"));
+        return MAPPER.createObjectNode().set("bool", bool);
+    }
+
     private static ObjectNode termQuery(String field, String value) {
         return MAPPER.createObjectNode().set(
                 "term",
@@ -695,6 +761,12 @@ public final class EnterpriseRagJavaBenchmark {
         return MAPPER.createObjectNode().set(
                 "terms",
                 MAPPER.createObjectNode().set(field, MAPPER.valueToTree(values)));
+    }
+
+    private static ObjectNode existsQuery(String field) {
+        return MAPPER.createObjectNode().set(
+                "exists",
+                MAPPER.createObjectNode().put("field", field));
     }
 
     private static String searchUrl(Config config) {
@@ -711,44 +783,40 @@ public final class EnterpriseRagJavaBenchmark {
             JsonNode body,
             String bearerToken) throws Exception {
         byte[] requestBody = MAPPER.writeValueAsBytes(body);
-        int maxAttempts = bearerToken.isBlank() ? 1 : 4;
+        int maxAttempts = 4;
+        Exception lastFailure = null;
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
-            connection.setConnectTimeout(10_000);
-            connection.setReadTimeout(60_000);
-            connection.setRequestMethod("POST");
-            connection.setRequestProperty("Content-Type", "application/json");
+            HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(60))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody));
             if (!bearerToken.isBlank()) {
-                connection.setRequestProperty("Authorization", "Bearer " + bearerToken);
+                request.header("Authorization", "Bearer " + bearerToken);
             }
-            connection.setFixedLengthStreamingMode(requestBody.length);
-            connection.setDoOutput(true);
             try {
-                connection.getOutputStream().write(requestBody);
-                int status = connection.getResponseCode();
-                var responseStream = status >= 200 && status < 300
-                        ? connection.getInputStream()
-                        : connection.getErrorStream();
-                byte[] responseBody = responseStream == null ? new byte[0] : responseStream.readAllBytes();
-                String response = new String(responseBody, StandardCharsets.UTF_8);
+                HttpResponse<String> response = client.send(
+                        request.build(),
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                int status = response.statusCode();
                 if (status >= 200 && status < 300) {
-                    return MAPPER.readTree(response);
+                    return response.body().isBlank()
+                            ? MAPPER.createObjectNode()
+                            : MAPPER.readTree(response.body());
                 }
-                if ((status == 429 || status >= 500) && attempt < maxAttempts) {
-                    Thread.sleep(1_000L << (attempt - 1));
-                    continue;
+                lastFailure = new IllegalStateException(
+                        "HTTP " + status + " from " + url + ": " + response.body());
+                if (status != 429 && status < 500) {
+                    throw lastFailure;
                 }
-                throw new IllegalStateException("HTTP " + status + " from " + url + ": " + response);
             } catch (IOException exception) {
-                if (attempt >= maxAttempts) {
-                    throw exception;
-                }
-                Thread.sleep(1_000L << (attempt - 1));
-            } finally {
-                connection.disconnect();
+                lastFailure = exception;
+            }
+            if (attempt < maxAttempts) {
+                Thread.sleep(1_000L << Math.min(attempt - 1, 5));
             }
         }
-        throw new IllegalStateException("embedding request retry loop exhausted");
+        throw new IllegalStateException("HTTP request failed after " + maxAttempts + " attempts", lastFailure);
     }
 
     private static List<RankedDocument> parseHits(JsonNode response) {
@@ -774,6 +842,11 @@ public final class EnterpriseRagJavaBenchmark {
                 docId,
                 hit.path("_id").asText(),
                 source.path("chunkId").asInt(),
+                source.path("chunkKind").asText(),
+                source.path("sectionPath").asText(),
+                source.path("speaker").asText(),
+                source.path("threadId").asText(),
+                source.path("eventTime").asText(),
                 source.path("sourceType").asText(),
                 source.path("sourcePath").asText(),
                 source.path("title").asText(),
@@ -1146,6 +1219,11 @@ public final class EnterpriseRagJavaBenchmark {
             String docId,
             String chunkEsId,
             int chunkId,
+            String chunkKind,
+            String sectionPath,
+            String speaker,
+            String threadId,
+            String eventTime,
             String sourceType,
             String sourcePath,
             String title,
@@ -1158,11 +1236,53 @@ public final class EnterpriseRagJavaBenchmark {
             String indexedAt,
             double score) {
 
+        RankedDocument(
+                String docId,
+                String chunkEsId,
+                int chunkId,
+                String sourceType,
+                String sourcePath,
+                String title,
+                String text,
+                String classification,
+                String documentVersion,
+                String documentHash,
+                String sourceUpdatedAt,
+                String contentHash,
+                String indexedAt,
+                double score) {
+            this(
+                    docId,
+                    chunkEsId,
+                    chunkId,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    sourceType,
+                    sourcePath,
+                    title,
+                    text,
+                    classification,
+                    documentVersion,
+                    documentHash,
+                    sourceUpdatedAt,
+                    contentHash,
+                    indexedAt,
+                    score);
+        }
+
         RankedDocument withScore(double newScore) {
             return new RankedDocument(
                     docId,
                     chunkEsId,
                     chunkId,
+                    chunkKind,
+                    sectionPath,
+                    speaker,
+                    threadId,
+                    eventTime,
                     sourceType,
                     sourcePath,
                     title,
@@ -1274,6 +1394,11 @@ public final class EnterpriseRagJavaBenchmark {
                 context.put("doc_id", span.docId());
                 context.put("chunk_es_id", span.chunkEsId());
                 context.put("chunk_id", span.chunkId());
+                context.put("chunk_kind", span.chunkKind());
+                context.put("section_path", span.sectionPath());
+                context.put("speaker", span.speaker());
+                context.put("thread_id", span.threadId());
+                context.put("event_time", span.eventTime());
                 context.put("title", span.title());
                 context.put("source_type", span.sourceType());
                 context.put("source_path", span.sourcePath());
@@ -1317,6 +1442,100 @@ public final class EnterpriseRagJavaBenchmark {
             row.put("evidence_fact_coverage", evidenceScores.factCoverage());
             row.put("evidence_gold_answer_token_recall", evidenceScores.goldAnswerTokenRecall());
             return row;
+        }
+
+        Map<String, Object> toOnlineResponse(
+                String traceId,
+                String query,
+                SearchPrincipal principal,
+                int maxContexts) {
+            List<Map<String, Object>> ranking = new ArrayList<>();
+            for (int index = 0; index < documents.size(); index++) {
+                RankedDocument document = documents.get(index);
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("rank", index + 1);
+                item.put("doc_id", document.docId());
+                item.put("chunk_id", document.chunkId());
+                item.put("chunk_es_id", document.chunkEsId());
+                item.put("source_type", document.sourceType());
+                item.put("source_path", document.sourcePath());
+                item.put("title", document.title());
+                item.put("score", document.score());
+                item.put("route_contributions", routeEvidenceByDoc
+                        .getOrDefault(document.docId(), List.of()).stream()
+                        .map(RouteEvidence::signal)
+                        .toList());
+                ranking.add(item);
+            }
+
+            List<Map<String, Object>> contexts = new ArrayList<>();
+            for (EvidenceBuilder.EvidenceSpan span : evidence.spans().stream().limit(maxContexts).toList()) {
+                Map<String, Object> context = new LinkedHashMap<>();
+                context.put("citation_id", span.citationId());
+                context.put("rank", span.rank());
+                context.put("document_rank", span.documentRank());
+                context.put("doc_id", span.docId());
+                context.put("chunk_es_id", span.chunkEsId());
+                context.put("chunk_id", span.chunkId());
+                context.put("chunk_kind", span.chunkKind());
+                context.put("section_path", span.sectionPath());
+                context.put("speaker", span.speaker());
+                context.put("thread_id", span.threadId());
+                context.put("event_time", span.eventTime());
+                context.put("title", span.title());
+                context.put("source_type", span.sourceType());
+                context.put("source_path", span.sourcePath());
+                context.put("classification", span.classification());
+                context.put("document_version", span.documentVersion());
+                context.put("document_hash", span.documentHash());
+                context.put("source_updated_at", span.sourceUpdatedAt());
+                context.put("content_hash", span.contentHash());
+                context.put("text", span.text());
+                context.put("token_count", span.tokenCount());
+                context.put("evidence_score", span.selectionScore());
+                context.put("query_coverage", span.queryCoverage());
+                context.put("route_signals", span.routeSignals());
+                context.put("conflict_group", span.conflictGroup());
+                contexts.add(context);
+            }
+
+            Set<String> routes = routeEvidenceByDoc.values().stream()
+                    .flatMap(List::stream)
+                    .map(value -> value.signal().route())
+                    .collect(java.util.stream.Collectors.toSet());
+            int top1Support = documents.isEmpty()
+                    ? 0
+                    : (int) routeEvidenceByDoc.getOrDefault(documents.get(0).docId(), List.of()).stream()
+                            .map(value -> value.signal().route())
+                            .distinct()
+                            .count();
+            Double top1Margin = documents.size() < 2
+                    ? null
+                    : Math.max(0.0d, (documents.get(0).score() - documents.get(1).score())
+                            / Math.max(Math.abs(documents.get(0).score()), 1e-9d));
+
+            Map<String, Object> routeFeatures = new LinkedHashMap<>();
+            routeFeatures.put("route_count", routes.size());
+            routeFeatures.put("top1_route_support", top1Support);
+            routeFeatures.put("top1_margin", top1Margin);
+            routeFeatures.put("candidate_document_count", documents.size());
+            routeFeatures.put("evidence_candidate_chunks", evidence.candidateChunks());
+            routeFeatures.put("evidence_conflict_count", evidence.conflicts().size());
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("trace_id", traceId);
+            response.put("query", query);
+            response.put("tenant_id", principal.tenantId());
+            response.put("ranked_documents", ranking);
+            response.put("ranked_doc_ids", documents.stream().limit(10).map(RankedDocument::docId).toList());
+            response.put("contexts", contexts);
+            response.put("evidence_conflicts", evidence.conflicts());
+            response.put("route_features", routeFeatures);
+            response.put("embedding_latency_ms", embeddingLatencyMs);
+            response.put("retrieval_latency_ms", retrievalLatencyMs);
+            response.put("evidence_latency_ms", evidenceLatencyMs);
+            response.put("latency_ms", latencyMs);
+            return response;
         }
     }
 
@@ -1436,6 +1655,40 @@ public final class EnterpriseRagJavaBenchmark {
                 "evidence-max-chunk-tokens",
                 "evidence-redundancy-penalty",
                 "progress-every");
+
+        static Config parseOnline(String[] args) {
+            for (String argument : args) {
+                if ("--config".equals(argument)) {
+                    return parse(args);
+                }
+            }
+            Set<String> present = new HashSet<>();
+            for (String argument : args) {
+                if (argument.startsWith("--")) {
+                    present.add(argument.substring(2));
+                }
+            }
+            List<String> values = new ArrayList<>(List.of(args));
+            Path base = Path.of(System.getProperty("java.io.tmpdir"), "paismart-rag-online-unused");
+            addOnlineDefault(values, present, "run-id", "online-search");
+            addOnlineDefault(values, present, "questions", base.resolve("questions.json").toString());
+            addOnlineDefault(values, present, "output", base.resolve("summary.json").toString());
+            addOnlineDefault(values, present, "details-output", base.resolve("details.jsonl").toString());
+            addOnlineDefault(values, present, "manifest-output", base.resolve("manifest.json").toString());
+            addOnlineDefault(values, present, "evidence-output", base.resolve("contexts.jsonl").toString());
+            return parse(values.toArray(String[]::new));
+        }
+
+        private static void addOnlineDefault(
+                List<String> arguments,
+                Set<String> present,
+                String name,
+                String value) {
+            if (present.add(name)) {
+                arguments.add("--" + name);
+                arguments.add(value);
+            }
+        }
 
         static Config parse(String[] args) {
             ExperimentConfig.Snapshot experiment;

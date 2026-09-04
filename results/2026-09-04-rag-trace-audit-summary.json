@@ -1,0 +1,64 @@
+{
+  "date": "2026-09-04",
+  "audit_kind": "historical_trace_recomputation_and_deterministic_bug_replay",
+  "baseline_commit": "8eefad8",
+  "historical_answer_run_signature": "44c93cfc5e89f06a9eff9cae2e6bec85018fd640e4ef0c3b8e9bd61557f0bc31",
+  "inputs": {
+    "contexts": {
+      "path": "/tmp/adaptive_rag/mixed-slack-linear-contexts.jsonl",
+      "sha256": "b7663976eee8e2499de4b4d3ffe609f0310e107f34dc3a77c5e6d8a8d2496c3b"
+    },
+    "answers": {
+      "path": "/tmp/adaptive_rag/flash-release-adaptive-full500.jsonl",
+      "sha256": "090c70ef0428e0760ac7c01a6fe9544c15604c83310758a5ed1c39a051aae660"
+    }
+  },
+  "scope": {"historical_questions": 500, "fact_evaluable_paired_questions": 480, "java_reported_evidence_questions": 470},
+  "same_python_scorer_480": {
+    "full_evidence": 0.7701099365277089,
+    "after_per_document_cap": 0.7481318520193688,
+    "after_context_count_cap": 0.7051340326049812,
+    "prompt": 0.658470371377753,
+    "pre_verifier_answer": 0.5342180582851292,
+    "final_answer": 0.5318956723991125
+  },
+  "not_directly_comparable_java_score_470": 0.8306713762502093,
+  "metric_warning": "All recalls above are lexical proxies. They are not semantic support, human correctness, or a causal decomposition. qst_0174 has prompt lexical recall 0.904 despite its required column list being excluded; qst_0065 answers both times correctly but scores 0.3095.",
+  "fact_evaluable_480_counts": {
+    "truncated_rows": 442,
+    "truncated_required_rows": 2,
+    "absent_required_citation_ids": 0,
+    "unchecked_deterministic_plan_rows": 304,
+    "citation_normalized_rows": 18,
+    "sentence_citation_normalized_rows": 156,
+    "requirement_coverage_normalized_rows": 3
+  },
+  "cases": {
+    "qst_0026": "S21 contains tens-of-minutes restoration and timing conditions; Fast per-document cap retains S1 and S11 and excludes S21.",
+    "qst_0174": "S21 contains all 11 required ledger columns; Fast per-document cap excludes it. High lexical prompt score falsely suggests evidence sufficiency.",
+    "qst_0065": "Answer agrees with gold on 16:09 UTC and 16:34 UTC; low lexical recall is not evidence of an incorrect answer.",
+    "qst_0434": "Post-period citations were attached to the next claim, leaving the correct main conclusion uncited and deleted. The draft ALSO had an incorrect story count; parser repair alone does not solve the whole answer."
+  },
+  "deterministic_budget_replay": [
+    {"qid": "qst_0361", "required_citation": "S26", "old_chars": 13000, "new_chars": 16000, "remaining_truncated_required": [], "remaining_missing_required": []},
+    {"qid": "qst_0372", "required_citation": "S29", "old_chars": 13000, "new_chars": 16000, "remaining_truncated_required": [], "remaining_missing_required": []}
+  ],
+  "validation": {
+    "python_unittest_discover": {"tests": 70, "failures": 0, "errors": 0},
+    "new_regression_tests": 14,
+    "git_diff_check": "passed",
+    "java": "not_verified_this_run: Maven timed out, latest attempt at resources:3.3.1:resources",
+    "paid_model_calls": 0,
+    "new_generation_500_ab": "not_run",
+    "new_qwen_plus_acceptance": "not_run",
+    "server_or_index_changes": false
+  },
+  "remaining_risks": [
+    "Fast per-document cap policy is unchanged; S21 exclusion examples are diagnosed but no new selector is enabled.",
+    "If maximum budget still truncates required text, it is reported explicitly; controller does not yet enforce a fail-closed policy for this condition.",
+    "Legacy sentence citation autofill remains syntactic, not evidence validation.",
+    "Requirement supported/covered labels are not independently verified completeness.",
+    "Citation precision still measures ID validity, not semantic support.",
+    "Prompt guard wording and static tests are not a prompt-injection security certification."
+  ]
+}

@@ -342,7 +342,7 @@ python tools/adaptive_rag_pipeline.py \
   --contexts runs/java-evidence-contexts.jsonl \
   --output runs/adaptive-plus.jsonl \
   --summary-output runs/adaptive-plus-summary.json \
-  --profile accept \
+  --profile validate \
   --mapper-model qwen-plus \
   --generator-model qwen-plus \
   --verifier-model qwen-plus \

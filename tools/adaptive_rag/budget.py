@@ -33,6 +33,7 @@ class BudgetedEvidence:
     expanded_to_maximum: bool
     selected_citations_present: tuple[str, ...]
     selected_citations_missing: tuple[str, ...]
+    selected_citations_truncated: tuple[str, ...] = tuple()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +43,7 @@ class BudgetedEvidence:
             "context_count": len(self.contexts),
             "selected_citations_present": list(self.selected_citations_present),
             "selected_citations_missing": list(self.selected_citations_missing),
+            "selected_citations_truncated": list(self.selected_citations_truncated),
         }
 
 
@@ -121,7 +123,13 @@ class DynamicEvidenceBudget:
         }
         required = set(plan.selected_citations)
         missing = required - present
-        expand = bool(missing) or (plan.missing_count > 0 and decision.maximum_chars > decision.initial_chars)
+        original_text = {str(c.get("citation_id") or ""): str(c.get("text") or "") for c in ordered}
+        def truncated_required(values: list[dict[str, Any]]) -> set[str]:
+            return {str(c.get("citation_id") or "") for c in values
+                    if str(c.get("citation_id") or "") in required
+                    and str(c.get("text") or "") != original_text[str(c.get("citation_id") or "")]}
+        truncated = truncated_required(included)
+        expand = (bool(missing or truncated) or plan.missing_count > 0) and decision.maximum_chars > decision.initial_chars
         budget = decision.initial_chars
         if expand:
             budget = decision.maximum_chars
@@ -136,6 +144,7 @@ class DynamicEvidenceBudget:
                 if context.get("citation_id")
             }
             missing = required - present
+            truncated = truncated_required(included)
         return BudgetedEvidence(
             rendered=rendered,
             contexts=tuple(included),
@@ -144,6 +153,7 @@ class DynamicEvidenceBudget:
             expanded_to_maximum=expand,
             selected_citations_present=tuple(sorted(required & present, key=citation_sort_key)),
             selected_citations_missing=tuple(sorted(missing, key=citation_sort_key)),
+            selected_citations_truncated=tuple(sorted(truncated, key=citation_sort_key)),
         )
 
 

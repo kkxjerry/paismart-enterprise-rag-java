@@ -4,12 +4,13 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from tools.qwen_plus_rag_pipeline import ApiResult, PipelineError, REFUSAL_TEXT, render_contexts, validate_generation
+from tools.qwen_plus_rag_pipeline import ApiResult, PipelineError, REFUSAL_TEXT, UNTRUSTED_EVIDENCE_RULE, render_contexts, validate_generation
 
 from .features import EXACT_ANCHOR_RE, RouterDecision
+from .claims import split_cited_segments
 from .requirements import RequirementPlan
 
-VERIFY_SYSTEM_PROMPT = """You are a strict claim-to-citation verifier for an enterprise RAG answer.
+VERIFY_SYSTEM_PROMPT = UNTRUSTED_EVIDENCE_RULE + "\n\n" + """You are a strict claim-to-citation verifier for an enterprise RAG answer.
 Check every numbered claim only against the supplied authorized evidence. Do not use outside knowledge.
 A claim is supported only when its cited text directly supports the exact names, numbers, dates, conditions,
 exceptions, and negations in the claim. A relevant document is not enough.
@@ -241,11 +242,7 @@ def verification_trigger_reasons(
 
 def extract_numbered_claims(answer: str) -> list[dict[str, Any]]:
     """Split an answer into stable claim IDs without asking the model to echo text."""
-    raw_segments = [
-        value.strip()
-        for value in re.split(r"\n+|(?<=[.!?。！？])\s+", answer)
-        if value.strip()
-    ]
+    raw_segments = split_cited_segments(answer)
     citation_only = re.compile(r"(?:\[S[1-9][0-9]*\])+[.,;:!?。！？；：]*")
     claims: list[dict[str, Any]] = []
     for segment in raw_segments:

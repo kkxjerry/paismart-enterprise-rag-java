@@ -1,6 +1,15 @@
 {
   "date": "2026-09-04",
-  "status": "implemented_and_acceptance_gated",
+  "status": "implemented_acceptance_incomplete",
+  "audit_correction": {
+    "date": "2026-09-04",
+    "reason": "Plus generation exited on invalid --profile accept; pair judge had no candidate file. These gates did not execute successfully.",
+    "source_logs": [
+      "/tmp/adaptive_rag/plus-adaptive-full500-final.log",
+      "/tmp/adaptive_rag/plus-adaptive-pair-judge100.log"
+    ],
+    "other_historical_validation_claims": "retained_as_historical_not_revalidated_by_this_correction"
+  },
   "scope": [
     "per_question_failure_attribution",
     "adaptive_fast_quality_deep_router",
@@ -52,7 +61,8 @@
     },
     "qwen_plus_500": {
       "questions": 500,
-      "status": "passed",
+      "status": "not_completed",
+      "failure_reason": "CLI rejected --profile accept; the supported validation profile is validate.",
       "requirements": [
         "all_rows_completed",
         "paired_answer_fact_recall_positive",
@@ -65,7 +75,8 @@
     },
     "qwen_plus_blind_pair_judge": {
       "questions": 100,
-      "status": "passed",
+      "status": "not_completed",
+      "failure_reason": "Candidate /tmp/adaptive_rag/plus-adaptive-full500-final.jsonl did not exist.",
       "requirements": [
         "no_judge_errors",
         "candidate_wins_more_than_baseline"

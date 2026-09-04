@@ -5,9 +5,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from tools.qwen_plus_rag_pipeline import ApiResult, PipelineError, QwenClient, REFUSAL_TEXT, score_result, validate_generation
+from tools.qwen_plus_rag_pipeline import ApiResult, PipelineError, QwenClient, REFUSAL_TEXT, UNTRUSTED_EVIDENCE_RULE, score_result, validate_generation
 
 from .budget import BudgetedEvidence, DynamicEvidenceBudget
+from .claims import split_cited_segments
 from .features import AdaptiveRouter, RouterDecision
 from .requirements import (
     Requirement,
@@ -25,7 +26,7 @@ UNCITED_CAVEAT_RE = re.compile(
     re.IGNORECASE,
 )
 
-GENERATION_SYSTEM_PROMPT = """You are the answer stage of an enterprise RAG system.
+GENERATION_SYSTEM_PROMPT = UNTRUSTED_EVIDENCE_RULE + "\n\n" + """You are the answer stage of an enterprise RAG system.
 Use only the supplied authorized evidence. Follow the requirement map and answer every supported requirement.
 For missing requirements, explicitly say the supplied evidence does not establish that part; do not invent it.
 When sources materially conflict, state the conflict and cite both sides instead of choosing silently.
@@ -519,34 +520,26 @@ def normalize_sentence_citations(answer: str, citations: list[str]) -> tuple[str
     if not citations:
         return answer, 0
     suffix = "".join(f"[{citation}]" for citation in citations)
-    parts = re.split(r"(\n+|(?<=[.!?。！？])\s+)", answer)
-    citation_only = re.compile(r"(?:\[S[1-9][0-9]*\])+[.,;:!?。！？；：]*")
+    parts: list[str] = []
+    cursor = 0
     normalized = 0
-    for index in range(0, len(parts), 2):
-        value = parts[index]
-        segment = value.strip().lstrip("-*•0123456789. )")
-        if not segment:
-            continue
-        next_content = parts[index + 2].strip() if index + 2 < len(parts) else ""
-        cited_by_next_segment = bool(citation_only.fullmatch(next_content))
+    for value in split_cited_segments(answer):
+        end = answer.index(value, cursor) + len(value)
+        parts.append(answer[cursor:end])
+        cursor = end
+        segment = value.lstrip("-*•0123456789. )")
         factual = bool(re.search(r"[A-Za-z0-9\u4e00-\u9fff]", segment))
-        if (
-            factual
-            and not INLINE_CITATION_RE.search(segment)
-            and not cited_by_next_segment
-            and not UNCITED_CAVEAT_RE.search(segment)
-        ):
-            parts[index] = value.rstrip() + " " + suffix
+        if (factual and not INLINE_CITATION_RE.search(segment)
+                and not UNCITED_CAVEAT_RE.search(segment)):
+            # Legacy syntactic recovery only, NOT a claim-support judgment.
+            parts.append(" " + suffix)
             normalized += 1
+    parts.append(answer[cursor:])
     return "".join(parts), normalized
 
 
 def uncited_factual_segments(answer: str) -> list[str]:
-    raw_segments = [
-        value.strip()
-        for value in re.split(r"\n+|(?<=[.!?。！？])\s+", answer)
-        if value.strip()
-    ]
+    raw_segments = split_cited_segments(answer)
     segments: list[str] = []
     citation_only = re.compile(r"(?:\[S[1-9][0-9]*\])+[.,;:!?。！？；：]*")
     for value in raw_segments:

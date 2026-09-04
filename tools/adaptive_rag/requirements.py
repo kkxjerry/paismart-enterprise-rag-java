@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
-from tools.qwen_plus_rag_pipeline import ApiResult, PipelineError, render_contexts
+from tools.qwen_plus_rag_pipeline import ApiResult, PipelineError, UNTRUSTED_EVIDENCE_RULE, render_contexts
 
-REQUIREMENT_SYSTEM_PROMPT = """You are the requirement and evidence planner for an enterprise RAG system.
+REQUIREMENT_SYSTEM_PROMPT = UNTRUSTED_EVIDENCE_RULE + "\n\n" + """You are the requirement and evidence planner for an enterprise RAG system.
 Use only the supplied authorized evidence. Do not answer the user's question and do not use outside knowledge.
 Break the question into the smallest independently checkable requirements. For every requirement, decide whether
 it is supported, missing, or materially conflicting, and cite only supplied S* evidence IDs.

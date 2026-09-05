@@ -469,6 +469,9 @@ public final class EnterpriseRagJavaBenchmark {
             RankedDocument document,
             double lexicalScore,
             List<EvidenceBuilder.RouteSignal> routeSignals) {
+        String evidenceText = document.parentText().isBlank()
+                ? document.text()
+                : document.parentText();
         return new EvidenceBuilder.ChunkCandidate(
                 document.docId(),
                 document.chunkEsId(),
@@ -481,14 +484,19 @@ public final class EnterpriseRagJavaBenchmark {
                 document.sourceType(),
                 document.sourcePath(),
                 document.title(),
-                document.text(),
+                evidenceText,
                 document.classification(),
                 document.documentVersion(),
                 document.documentHash(),
                 document.sourceUpdatedAt(),
                 document.contentHash(),
                 lexicalScore,
-                routeSignals);
+                routeSignals,
+                document.text(),
+                document.parentId(),
+                document.contextPrefix(),
+                document.parentStart(),
+                document.parentEnd());
     }
 
     static EvidenceScores scoreEvidence(
@@ -688,6 +696,11 @@ public final class EnterpriseRagJavaBenchmark {
                 .add("speaker")
                 .add("threadId")
                 .add("eventTime")
+                .add("parentId")
+                .add("parentText")
+                .add("contextPrefix")
+                .add("parentStart")
+                .add("parentEnd")
                 .add("title")
                 .add("textContent")
                 .add("sourceType")
@@ -847,6 +860,11 @@ public final class EnterpriseRagJavaBenchmark {
                 source.path("speaker").asText(),
                 source.path("threadId").asText(),
                 source.path("eventTime").asText(),
+                source.path("parentId").asText(),
+                source.path("parentText").asText(),
+                source.path("contextPrefix").asText(),
+                source.path("parentStart").asInt(-1),
+                source.path("parentEnd").asInt(-1),
                 source.path("sourceType").asText(),
                 source.path("sourcePath").asText(),
                 source.path("title").asText(),
@@ -1224,6 +1242,11 @@ public final class EnterpriseRagJavaBenchmark {
             String speaker,
             String threadId,
             String eventTime,
+            String parentId,
+            String parentText,
+            String contextPrefix,
+            int parentStart,
+            int parentEnd,
             String sourceType,
             String sourcePath,
             String title,
@@ -1260,6 +1283,11 @@ public final class EnterpriseRagJavaBenchmark {
                     "",
                     "",
                     "",
+                    "",
+                    "",
+                    "",
+                    -1,
+                    -1,
                     sourceType,
                     sourcePath,
                     title,
@@ -1283,6 +1311,11 @@ public final class EnterpriseRagJavaBenchmark {
                     speaker,
                     threadId,
                     eventTime,
+                    parentId,
+                    parentText,
+                    contextPrefix,
+                    parentStart,
+                    parentEnd,
                     sourceType,
                     sourcePath,
                     title,
@@ -1399,6 +1432,11 @@ public final class EnterpriseRagJavaBenchmark {
                 context.put("speaker", span.speaker());
                 context.put("thread_id", span.threadId());
                 context.put("event_time", span.eventTime());
+                context.put("parent_id", span.parentId());
+                context.put("retrieval_text", span.retrievalText());
+                context.put("context_prefix", span.contextPrefix());
+                context.put("parent_start", span.parentStart());
+                context.put("parent_end", span.parentEnd());
                 context.put("title", span.title());
                 context.put("source_type", span.sourceType());
                 context.put("source_path", span.sourcePath());
@@ -1482,6 +1520,11 @@ public final class EnterpriseRagJavaBenchmark {
                 context.put("speaker", span.speaker());
                 context.put("thread_id", span.threadId());
                 context.put("event_time", span.eventTime());
+                context.put("parent_id", span.parentId());
+                context.put("retrieval_text", span.retrievalText());
+                context.put("context_prefix", span.contextPrefix());
+                context.put("parent_start", span.parentStart());
+                context.put("parent_end", span.parentEnd());
                 context.put("title", span.title());
                 context.put("source_type", span.sourceType());
                 context.put("source_path", span.sourcePath());

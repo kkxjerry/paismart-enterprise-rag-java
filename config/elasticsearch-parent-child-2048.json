@@ -1,0 +1,95 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "30s",
+    "similarity": {
+      "enterprise_bm25": {
+        "type": "BM25",
+        "k1": 2.2,
+        "b": 1.0
+      }
+    }
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "_meta": {
+      "schema_version": "4-parent-child-qwen3-embedding-4b-2048",
+      "dataset": "onyx-dot-app/EnterpriseRAG-Bench",
+      "embedding_model": "Qwen/Qwen3-Embedding-4B",
+      "embedding_dimension": 2048,
+      "retrieval_unit": "source-specific leaf",
+      "generation_unit": "stored verbatim parent",
+      "context_prefix": "deterministic metadata prefix included in embedding input"
+    },
+    "properties": {
+      "benchmarkDocId": { "type": "keyword" },
+      "chunkId": { "type": "integer" },
+      "chunkKind": { "type": "keyword" },
+      "sectionPath": { "type": "keyword", "ignore_above": 1024 },
+      "speaker": { "type": "keyword" },
+      "threadId": { "type": "keyword" },
+      "eventTime": { "type": "date", "ignore_malformed": true },
+      "parentId": { "type": "keyword" },
+      "parentText": { "type": "text", "index": false },
+      "contextPrefix": { "type": "text", "index": false },
+      "parentStart": { "type": "integer" },
+      "parentEnd": { "type": "integer" },
+      "chunkingStrategy": { "type": "keyword" },
+      "chunkingFingerprint": { "type": "keyword" },
+      "title": {
+        "type": "text",
+        "analyzer": "standard",
+        "search_analyzer": "standard",
+        "similarity": "enterprise_bm25",
+        "fields": {
+          "keyword": { "type": "keyword", "ignore_above": 512 },
+          "english": {
+            "type": "text",
+            "analyzer": "english",
+            "search_analyzer": "english",
+            "similarity": "enterprise_bm25"
+          }
+        }
+      },
+      "textContent": {
+        "type": "text",
+        "analyzer": "standard",
+        "search_analyzer": "standard",
+        "similarity": "enterprise_bm25",
+        "fields": {
+          "english": {
+            "type": "text",
+            "analyzer": "english",
+            "search_analyzer": "english",
+            "similarity": "enterprise_bm25"
+          }
+        }
+      },
+      "sourceType": { "type": "keyword" },
+      "sourcePath": { "type": "keyword", "ignore_above": 1024 },
+      "sourceDataset": { "type": "keyword" },
+      "tenantId": { "type": "keyword" },
+      "classification": { "type": "keyword" },
+      "allowedGroupIds": { "type": "keyword" },
+      "deniedGroupIds": { "type": "keyword" },
+      "aclHash": { "type": "keyword" },
+      "vector": {
+        "type": "dense_vector",
+        "dims": 2048,
+        "index": true,
+        "similarity": "cosine"
+      },
+      "modelVersion": { "type": "keyword" },
+      "documentVersion": { "type": "keyword" },
+      "documentHash": { "type": "keyword" },
+      "documentGeneration": { "type": "keyword" },
+      "documentChunkCount": { "type": "integer" },
+      "sourceUpdatedAt": { "type": "date", "ignore_malformed": true },
+      "contentHash": { "type": "keyword" },
+      "sourceRevision": { "type": "keyword" },
+      "deletedAt": { "type": "date", "ignore_malformed": true },
+      "indexedAt": { "type": "date" }
+    }
+  }
+}

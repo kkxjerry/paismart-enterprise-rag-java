@@ -342,7 +342,22 @@ final class SourceAwareChunker {
             String sectionPath,
             String speaker,
             String threadId,
-            String eventTime) {
+            String eventTime,
+            String parentId,
+            String parentText,
+            String contextPrefix,
+            int parentStart,
+            int parentEnd) {
+
+        Segment(
+                String text,
+                String kind,
+                String sectionPath,
+                String speaker,
+                String threadId,
+                String eventTime) {
+            this(text, kind, sectionPath, speaker, threadId, eventTime, "", "", "", -1, -1);
+        }
     }
 
     private record Block(

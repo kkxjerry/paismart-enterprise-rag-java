@@ -118,7 +118,12 @@ public final class EvidenceBuilder {
                         selection.routeSupport(),
                         finalNovelty,
                         chunk.routeSignals(),
-                        conflictGroup));
+                        conflictGroup,
+                        chunk.parentId(),
+                        chunk.retrievalText(),
+                        chunk.contextPrefix(),
+                        chunk.parentStart(),
+                        chunk.parentEnd()));
                 remainingGlobalTokens -= tokens;
             }
         }
@@ -147,8 +152,9 @@ public final class EvidenceBuilder {
         List<CandidateState> candidates = new ArrayList<>();
         for (ChunkCandidate chunk : chunks) {
             int scoringTextLimit = Math.min(config.maxChunkTokens(), config.perDocumentTokenBudget());
-            String scoringText = focusWindow(chunk.text(), queryTokens, scoringTextLimit);
-            Set<String> tokens = tokenSet(chunk.title() + "\n" + scoringText);
+            String scoringText = focusWindow(chunk.retrievalText(), queryTokens, scoringTextLimit);
+            Set<String> tokens = tokenSet(
+                    chunk.title() + "\n" + chunk.contextPrefix() + "\n" + scoringText);
             Set<String> matchedQueryTokens = intersection(queryTokens, tokens);
             double queryCoverage = ratio(matchedQueryTokens.size(), queryTokens.size());
             double lexical = maxLexical <= 0.0d
@@ -269,6 +275,9 @@ public final class EvidenceBuilder {
     }
 
     private static String chunkKey(ChunkCandidate chunk) {
+        if (!chunk.parentId().isBlank()) {
+            return chunk.parentId();
+        }
         if (!chunk.chunkEsId().isBlank()) {
             return chunk.chunkEsId();
         }
@@ -523,7 +532,12 @@ public final class EvidenceBuilder {
             String sourceUpdatedAt,
             String contentHash,
             double lexicalScore,
-            List<RouteSignal> routeSignals) {
+            List<RouteSignal> routeSignals,
+            String retrievalText,
+            String parentId,
+            String contextPrefix,
+            int parentStart,
+            int parentEnd) {
 
         public ChunkCandidate {
             docId = value(docId);
@@ -542,10 +556,65 @@ public final class EvidenceBuilder {
             documentHash = value(documentHash);
             sourceUpdatedAt = value(sourceUpdatedAt);
             contentHash = value(contentHash);
+            retrievalText = value(retrievalText);
+            parentId = value(parentId);
+            contextPrefix = value(contextPrefix);
+            if (retrievalText.isBlank()) {
+                retrievalText = text;
+            }
             routeSignals = routeSignals == null ? List.of() : List.copyOf(routeSignals);
-            if (docId.isBlank() || chunkId < 0 || !Double.isFinite(lexicalScore)) {
+            if (docId.isBlank() || chunkId < 0 || !Double.isFinite(lexicalScore)
+                    || parentStart < -1 || parentEnd < -1
+                    || (parentStart >= 0 && parentEnd < parentStart)) {
                 throw new IllegalArgumentException("invalid evidence chunk candidate");
             }
+        }
+
+        public ChunkCandidate(
+                String docId,
+                String chunkEsId,
+                int chunkId,
+                String chunkKind,
+                String sectionPath,
+                String speaker,
+                String threadId,
+                String eventTime,
+                String sourceType,
+                String sourcePath,
+                String title,
+                String text,
+                String classification,
+                String documentVersion,
+                String documentHash,
+                String sourceUpdatedAt,
+                String contentHash,
+                double lexicalScore,
+                List<RouteSignal> routeSignals) {
+            this(
+                    docId,
+                    chunkEsId,
+                    chunkId,
+                    chunkKind,
+                    sectionPath,
+                    speaker,
+                    threadId,
+                    eventTime,
+                    sourceType,
+                    sourcePath,
+                    title,
+                    text,
+                    classification,
+                    documentVersion,
+                    documentHash,
+                    sourceUpdatedAt,
+                    contentHash,
+                    lexicalScore,
+                    routeSignals,
+                    text,
+                    "",
+                    "",
+                    -1,
+                    -1);
         }
 
         public ChunkCandidate(
@@ -632,10 +701,85 @@ public final class EvidenceBuilder {
             double routeSupport,
             double noveltyScore,
             List<RouteSignal> routeSignals,
-            String conflictGroup) {
+            String conflictGroup,
+            String parentId,
+            String retrievalText,
+            String contextPrefix,
+            int parentStart,
+            int parentEnd) {
 
         public EvidenceSpan {
             routeSignals = routeSignals == null ? List.of() : List.copyOf(routeSignals);
+            parentId = value(parentId);
+            retrievalText = value(retrievalText);
+            contextPrefix = value(contextPrefix);
+        }
+
+        public EvidenceSpan(
+                String citationId,
+                int rank,
+                String docId,
+                int documentRank,
+                String chunkEsId,
+                int chunkId,
+                String chunkKind,
+                String sectionPath,
+                String speaker,
+                String threadId,
+                String eventTime,
+                String sourceType,
+                String sourcePath,
+                String title,
+                String classification,
+                String documentVersion,
+                String documentHash,
+                String sourceUpdatedAt,
+                String contentHash,
+                String text,
+                int tokenCount,
+                double selectionScore,
+                double baseScore,
+                double queryCoverage,
+                double lexicalScore,
+                double routeSupport,
+                double noveltyScore,
+                List<RouteSignal> routeSignals,
+                String conflictGroup) {
+            this(
+                    citationId,
+                    rank,
+                    docId,
+                    documentRank,
+                    chunkEsId,
+                    chunkId,
+                    chunkKind,
+                    sectionPath,
+                    speaker,
+                    threadId,
+                    eventTime,
+                    sourceType,
+                    sourcePath,
+                    title,
+                    classification,
+                    documentVersion,
+                    documentHash,
+                    sourceUpdatedAt,
+                    contentHash,
+                    text,
+                    tokenCount,
+                    selectionScore,
+                    baseScore,
+                    queryCoverage,
+                    lexicalScore,
+                    routeSupport,
+                    noveltyScore,
+                    routeSignals,
+                    conflictGroup,
+                    "",
+                    text,
+                    "",
+                    -1,
+                    -1);
         }
 
         public EvidenceSpan(
@@ -762,7 +906,8 @@ public final class EvidenceBuilder {
         }
 
         private void merge(ChunkCandidate chunk) {
-            if (preferred.text().isBlank() && !chunk.text().isBlank()) {
+            if ((preferred.text().isBlank() && !chunk.text().isBlank())
+                    || chunk.lexicalScore() > preferred.lexicalScore()) {
                 preferred = chunk;
             }
             lexicalScore = Math.max(lexicalScore, chunk.lexicalScore());
@@ -791,7 +936,12 @@ public final class EvidenceBuilder {
                     preferred.sourceUpdatedAt(),
                     preferred.contentHash(),
                     lexicalScore,
-                    List.copyOf(routes.values()));
+                    List.copyOf(routes.values()),
+                    preferred.retrievalText(),
+                    preferred.parentId(),
+                    preferred.contextPrefix(),
+                    preferred.parentStart(),
+                    preferred.parentEnd());
         }
     }
 }

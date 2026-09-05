@@ -73,6 +73,11 @@ public final class ElasticsearchIndexCommand {
         keyword(properties, "speaker");
         keyword(properties, "threadId");
         properties.putObject("eventTime").put("type", "date").put("ignore_malformed", true);
+        keyword(properties, "parentId");
+        properties.putObject("parentText").put("type", "text").put("index", false);
+        properties.putObject("contextPrefix").put("type", "text").put("index", false);
+        properties.putObject("parentStart").put("type", "integer");
+        properties.putObject("parentEnd").put("type", "integer");
         keyword(properties, "chunkingStrategy");
         keyword(properties, "chunkingFingerprint");
         text(properties, "title", true);

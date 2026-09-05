@@ -139,7 +139,15 @@ public final class EnterpriseRagImporter {
             JsonHttpClient http) throws Exception {
         List<Chunk> chunks = buildChunks(config, documents, aclByDocId);
         List<String> passages = chunks.stream()
-                .map(chunk -> chunk.source().path("title").asText() + "\n" + chunk.source().path("textContent").asText())
+                .map(chunk -> {
+                    String prefix = config.contextPrefixEnabled()
+                            ? chunk.source().path("contextPrefix").asText("")
+                            : "";
+                    if (prefix.isBlank()) {
+                        prefix = chunk.source().path("title").asText();
+                    }
+                    return prefix + "\n" + chunk.source().path("textContent").asText();
+                })
                 .toList();
         List<List<Double>> vectors = embedAll(config, embeddings, passages);
         if (vectors.size() != chunks.size()) {
@@ -254,6 +262,13 @@ public final class EnterpriseRagImporter {
                 source.put("sectionPath", part.sectionPath());
                 source.put("speaker", part.speaker());
                 source.put("threadId", part.threadId());
+                if (!part.parentId().isBlank()) {
+                    source.put("parentId", docId + ":" + part.parentId());
+                    source.put("parentText", part.parentText());
+                    source.put("contextPrefix", part.contextPrefix());
+                    source.put("parentStart", part.parentStart());
+                    source.put("parentEnd", part.parentEnd());
+                }
                 if (!part.eventTime().isBlank()) {
                     source.put("eventTime", part.eventTime());
                 }
@@ -296,18 +311,29 @@ public final class EnterpriseRagImporter {
             String title,
             String documentText) {
         String normalizedSource = sourceType == null ? "" : sourceType.toLowerCase(java.util.Locale.ROOT);
-        boolean structured = "source-aware".equals(config.chunkingStrategy())
-                && (config.sourceAwareTypes().isEmpty() || config.sourceAwareTypes().contains(normalizedSource));
-        return structured
-                ? SourceAwareChunker.chunk(
-                        sourceType,
-                        title,
-                        documentText,
-                        config.chunkSize(),
-                        config.chunkOverlap())
-                : TextChunker.chunk(documentText, config.chunkSize(), config.chunkOverlap()).stream()
-                        .map(text -> new SourceAwareChunker.Segment(text, "body", title, "", "", ""))
-                        .toList();
+        boolean selected = config.sourceAwareTypes().isEmpty()
+                || config.sourceAwareTypes().contains(normalizedSource);
+        if ("parent-child".equals(config.chunkingStrategy())
+                && selected
+                && HierarchicalSourceChunker.supportedTypes().contains(normalizedSource)) {
+            return HierarchicalSourceChunker.chunk(
+                    sourceType,
+                    title,
+                    documentText,
+                    config.chunkSize(),
+                    config.chunkOverlap());
+        }
+        if ("source-aware".equals(config.chunkingStrategy()) && selected) {
+            return SourceAwareChunker.chunk(
+                    sourceType,
+                    title,
+                    documentText,
+                    config.chunkSize(),
+                    config.chunkOverlap());
+        }
+        return TextChunker.chunk(documentText, config.chunkSize(), config.chunkOverlap()).stream()
+                .map(text -> new SourceAwareChunker.Segment(text, "body", title, "", "", ""))
+                .toList();
     }
 
     static String chunkingFingerprint(Config config) {
@@ -317,8 +343,11 @@ public final class EnterpriseRagImporter {
         String scope = config.sourceAwareTypes().isEmpty()
                 ? "*"
                 : String.join(",", config.sourceAwareTypes().stream().sorted().toList());
+        String contextual = "parent-child".equals(config.chunkingStrategy())
+                ? ":context-prefix=" + config.contextPrefixEnabled()
+                : "";
         return config.chunkingStrategy() + "[" + scope + "]:"
-                + config.chunkSize() + ":" + config.chunkOverlap();
+                + config.chunkSize() + ":" + config.chunkOverlap() + contextual;
     }
 
     static String documentGeneration(
@@ -499,6 +528,7 @@ public final class EnterpriseRagImporter {
         signature.put("chunk_overlap", config.chunkOverlap());
         signature.put("chunking_strategy", config.chunkingStrategy());
         signature.put("source_aware_types", String.join(",", config.sourceAwareTypes().stream().sorted().toList()));
+        signature.put("context_prefix_enabled", config.contextPrefixEnabled());
         signature.put("fail_on_missing_acl", config.failOnMissingAcl());
         return signature;
     }
@@ -649,13 +679,15 @@ public final class EnterpriseRagImporter {
             long maxDocuments,
             Path checkpoint,
             Path failureLog,
-            Path output) {
+            Path output,
+            boolean contextPrefixEnabled) {
 
         Config {
             sourceAwareTypes = sourceAwareTypes == null ? Set.of() : Set.copyOf(sourceAwareTypes);
-            if (!"source-aware".equals(chunkingStrategy) && !sourceAwareTypes.isEmpty()) {
+            if (!Set.of("source-aware", "parent-child").contains(chunkingStrategy)
+                    && !sourceAwareTypes.isEmpty()) {
                 throw new IllegalArgumentException(
-                        "--source-aware-types requires --chunking-strategy source-aware");
+                        "--source-aware-types requires --chunking-strategy source-aware or parent-child");
             }
         }
 
@@ -694,12 +726,14 @@ public final class EnterpriseRagImporter {
                     maxDocuments,
                     values.path("checkpoint", "runs/import-checkpoint.json"),
                     values.path("failure-log", "runs/import-failures.jsonl"),
-                    outputValue.isBlank() ? null : Path.of(outputValue));
+                    outputValue.isBlank() ? null : Path.of(outputValue),
+                    values.bool("context-prefix-enabled", true));
         }
 
         private static String chunkingStrategy(String value) {
-            if (!Set.of("fixed", "source-aware").contains(value)) {
-                throw new IllegalArgumentException("--chunking-strategy must be fixed or source-aware");
+            if (!Set.of("fixed", "source-aware", "parent-child").contains(value)) {
+                throw new IllegalArgumentException(
+                        "--chunking-strategy must be fixed, source-aware, or parent-child");
             }
             return value;
         }
@@ -716,7 +750,9 @@ public final class EnterpriseRagImporter {
                 }
             }
             Set<String> unsupported = new java.util.HashSet<>(values);
-            unsupported.removeAll(SourceAwareChunker.supportedTypes());
+            Set<String> supported = new java.util.HashSet<>(SourceAwareChunker.supportedTypes());
+            supported.addAll(HierarchicalSourceChunker.supportedTypes());
+            unsupported.removeAll(supported);
             if (!unsupported.isEmpty()) {
                 throw new IllegalArgumentException(
                         "--source-aware-types contains unsupported values: " + unsupported);

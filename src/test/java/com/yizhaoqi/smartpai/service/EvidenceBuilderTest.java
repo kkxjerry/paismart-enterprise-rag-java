@@ -222,6 +222,44 @@ class EvidenceBuilderTest {
                 assertThat(span.conflictGroup()).isEqualTo("source:confluence:access-policy"));
     }
 
+    @Test
+    void scoresAChildLeafButReturnsAndDeduplicatesItsParent() {
+        EvidenceBuilder.RouteSignal signal = signal("bm25_original", 1, 1.0d, "doc-parent:leaf-1");
+        String parent = "Rollback prerequisites. Restore is typically tens of minutes. "
+                + "Exact timing depends on snapshot mechanism and database size.";
+        EvidenceBuilder.ChunkCandidate firstLeaf = new EvidenceBuilder.ChunkCandidate(
+                "doc-parent", "doc-parent:leaf-1", 1,
+                "leaf_text", "Rollback", "", "", "",
+                "gmail", "gmail:rollback", "Rollback guidance", parent,
+                "internal", "v1", "doc-hash", "2026-08-01T00:00:00Z", "parent-hash",
+                8.0d, List.of(signal),
+                "Restore is typically tens of minutes.",
+                "doc-parent:message-3", "title=Rollback guidance | section=Rollback", 24, 64);
+        EvidenceBuilder.ChunkCandidate secondLeaf = new EvidenceBuilder.ChunkCandidate(
+                "doc-parent", "doc-parent:leaf-2", 2,
+                "leaf_text", "Rollback", "", "", "",
+                "gmail", "gmail:rollback", "Rollback guidance", parent,
+                "internal", "v1", "doc-hash", "2026-08-01T00:00:00Z", "parent-hash",
+                7.0d, List.of(),
+                "Exact timing depends on database size.",
+                "doc-parent:message-3", "title=Rollback guidance | section=Rollback", 65, 110);
+        EvidenceBuilder.DocumentCandidate document = new EvidenceBuilder.DocumentCandidate(
+                "doc-parent", 1, signal.rrfContribution(), List.of(signal),
+                List.of(firstLeaf, secondLeaf));
+
+        EvidenceBuilder.EvidenceBundle result = builder.build(
+                "How long does restore take with snapshots?",
+                List.of(document),
+                new EvidenceBuilder.Config(1, 3, 100, 100, 100, 0.35d));
+
+        assertThat(result.spans()).singleElement().satisfies(span -> {
+            assertThat(span.text()).contains("tens of minutes", "database size");
+            assertThat(span.retrievalText()).contains("tens of minutes");
+            assertThat(span.parentId()).isEqualTo("doc-parent:message-3");
+            assertThat(span.contextPrefix()).contains("section=Rollback");
+        });
+    }
+
     private static EvidenceBuilder.DocumentCandidate document(
             String docId,
             int rank,

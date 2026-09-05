@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-05",
+  "baseline_revision": "bfd02a8",
+  "status": "research_and_experiment_plan_not_implemented",
+  "observed_chunk_health": {
+    "contexts": 14570,
+    "total_context_characters": 16441793,
+    "text_length_chars": {
+      "mean": 1128.5,
+      "median": 1194.0,
+      "p95": 1199,
+      "maximum": 1200,
+      "at_least_1190": 10265,
+      "hard_cap_saturation_rate": 0.7045
+    },
+    "structure_metadata": {
+      "chunk_kind_or_section_path_present": 3041,
+      "coverage": 0.2087,
+      "speaker_or_thread_present": 1634,
+      "coverage": 0.1121,
+      "event_time_present": 0,
+      "coverage": 0.0,
+      "structured_sources_in_current_index": ["slack", "linear"]
+    },
+    "overlap": {
+      "adjacent_pairs": 6127,
+      "pairs_with_exact_overlap_at_least_20_chars": 5202,
+      "pair_rate": 0.8490288885261955,
+      "mean_positive_overlap_chars": 198.8,
+      "maximum_overlap_chars": 199,
+      "duplicate_characters": 1034326,
+      "waste_ratio": 0.06290834582335393
+    },
+    "evidence_chunks_per_question_document": {
+      "median": 3,
+      "p95": 3,
+      "maximum": 3,
+      "cause": "EvidenceBuilder chunksPerDocument=3 plus round-robin emission"
+    }
+  },
+  "current_quality": {
+    "document_retrieval": {
+      "hit_at_1": 0.8915,
+      "hit_at_5": 0.9596,
+      "hit_at_10": 0.9809,
+      "mrr_at_10": 0.9217,
+      "acl_source_violations": 0,
+      "decision": "freeze_as_guardrail"
+    },
+    "historical_funnel_same_python_scorer_480": {
+      "full_java_evidence": 0.770110,
+      "after_per_document_cap": 0.748132,
+      "after_context_count_cap": 0.705134,
+      "actual_prompt": 0.658470,
+      "pre_verifier_answer": 0.534218,
+      "post_verifier_answer": 0.531896
+    },
+    "query_spans_v3_500_replay": {
+      "prompt_lexical_recall": 0.660621,
+      "requirement_evidence_coverage": 0.677664,
+      "mean_rendered_chars": 9651.974,
+      "paired_wins": 221,
+      "paired_regressions": 109,
+      "paired_ties": 150,
+      "regression_rate": 0.22708333333333333,
+      "promotion_gate": 0.15,
+      "promoted": false
+    },
+    "query_spans_v3_live_flash_20": {
+      "answer_fact_recall_legacy": 0.460165,
+      "answer_fact_recall_candidate": 0.512922,
+      "answer_typed_exact_legacy": 0.470833,
+      "answer_typed_exact_candidate": 0.627083,
+      "requirement_completion_legacy": 0.365417,
+      "requirement_completion_candidate": 0.460833,
+      "answer_list_completeness_legacy": 0.145,
+      "answer_list_completeness_candidate": 0.41,
+      "answer_condition_accuracy_legacy": 0.166667,
+      "answer_condition_accuracy_candidate": 0.283333,
+      "answer_negation_accuracy_both": 0.0,
+      "total_tokens_legacy": 60074,
+      "total_tokens_candidate": 59445,
+      "mean_latency_ms_legacy": 1844.62,
+      "mean_latency_ms_candidate": 1900.40,
+      "errors_per_arm": 0
+    }
+  },
+  "source_diagnostics": {
+    "confluence": {"questions": 114, "lexical_delta_pp": 1.69, "wins": 52, "regressions": 40, "condition_exception_delta_pp": -2.43, "priority": "high"},
+    "jira": {"questions": 100, "lexical_delta_pp": 2.93, "requirement_coverage_delta_pp": 5.60},
+    "slack": {"questions": 79, "lexical_delta_pp": 2.49, "requirement_coverage_delta_pp": 8.17},
+    "github": {"questions": 60, "lexical_delta_pp": 2.37, "exact_value_delta_pp": 8.80},
+    "google_drive": {"questions": 60, "lexical_delta_pp": 1.61, "requirement_coverage_delta_pp": 7.93},
+    "linear": {"questions": 58, "lexical_delta_pp": 2.03, "condition_exception_delta_pp": 8.10},
+    "gmail": {"questions": 55, "lexical_delta_pp": 3.66, "requirement_coverage_delta_pp": 8.73, "priority": "high"},
+    "hubspot": {"questions": 34, "lexical_delta_pp": 2.41, "condition_exception_delta_pp": 12.50},
+    "fireflies": {"questions": 25, "lexical_delta_pp": -0.56, "requirement_coverage_delta_pp": 4.57, "priority": "highest_chunk_parser_risk"},
+    "project_related": {"questions": 40, "lexical_delta_pp": 0.55, "wins": 20, "regressions": 19, "priority": "generation_and_hierarchy"},
+    "high_level": {"questions": 10, "share_of_total": 0.02, "decision": "graph_or_raptor_route_only"}
+  },
+  "target_architecture": {
+    "document_retrieval": "existing four-route weighted RRF; frozen",
+    "leaf_retrieval": "sentence/proposition/field/message/symbol retrieval restricted to authorized top documents",
+    "context_reconstruction": "parent or neighboring window expansion based on structure",
+    "packing": "requirement slots with canonical anchor, support, and explicit alternatives/conflicts",
+    "generation": "structured per-requirement facts, exact span citations and source_document before prose composition",
+    "verification": "deterministic typed checks first; semantic verification only for high-risk claims"
+  },
+  "change_candidates": [
+    {
+      "id": "E1",
+      "priority": 1,
+      "name": "query_time_leaf_retrieval_and_parent_expansion",
+      "reindex_required": false,
+      "change": "Split the current Java candidate chunks into sentence/list/field leaves at query time, rank only inside top documents, then return complete parent structures.",
+      "borrowed_from": ["LlamaIndex SentenceWindow", "Haystack AutoMergingRetriever", "Dense X Retrieval"],
+      "primary_metrics": ["answer_bearing_leaf_recall_at_k", "parent_expansion_completeness", "requirement_evidence_coverage", "packing_regression_rate"],
+      "promotion_gate": {"requirement_evidence_coverage_gain_pp_min": 3.0, "packing_regression_rate_max": 0.15, "gold_doc_retained_no_regression": true}
+    },
+    {
+      "id": "E2",
+      "priority": 2,
+      "name": "requirement_document_grouped_prompt",
+      "reindex_required": false,
+      "change": "Group evidence by requirement and document, designate one canonical document for single-artifact requirements, place anchors first, and mark alternatives/conflicts explicitly.",
+      "fixes": ["qst_0218 source mixing", "qst_0222 similar page confusion"],
+      "primary_metrics": ["canonical_source_accuracy", "source_contamination_rate", "requirement_completion", "answer_condition_accuracy", "answer_negation_accuracy"]
+    },
+    {
+      "id": "E3",
+      "priority": 3,
+      "name": "source_specific_parent_child_index",
+      "reindex_required": true,
+      "initial_sources": ["fireflies", "confluence", "gmail"],
+      "change": "Store raw text and normalized/contextual search text separately; add parent_id, node_kind, offsets, artifact identity, speaker and event time.",
+      "primary_metrics": ["per_source_leaf_recall", "boundary_integrity_rate", "structure_metadata_coverage", "overlap_waste_ratio", "index_storage_ratio", "p95_inner_doc_latency"]
+    },
+    {
+      "id": "E4",
+      "priority": 4,
+      "name": "deterministic_contextual_prefix",
+      "reindex_required": true,
+      "change": "Prepend title, section path, artifact type, sender/speaker/date and canonical identity to search_text for dense and BM25 while preserving raw_text for citations.",
+      "borrowed_from": ["Anthropic Contextual Retrieval"],
+      "llm_contextualizer": "deferred_until_deterministic_prefix_ablation"
+    },
+    {
+      "id": "E5",
+      "priority": 5,
+      "name": "proposition_index_and_late_chunking_poc",
+      "reindex_required": true,
+      "change": "Use propositions only as retrieval keys with parent raw spans as payload; independently test whether the Qwen3/vLLM stack can expose token representations needed for late chunking.",
+      "stop_condition": "stop if top-document answer-bearing leaf recall or downstream typed accuracy does not improve"
+    },
+    {
+      "id": "E6",
+      "priority": 6,
+      "name": "global_hierarchical_route",
+      "reindex_required": true,
+      "eligible_queries": "high_level plus manually validated global subsets only",
+      "change": "Evaluate RAPTOR or GraphRAG-style summaries/relations without entering the normal exact-fact path.",
+      "global_enablement_forbidden": true
+    }
+  ],
+  "required_new_metrics": [
+    "hard_cap_saturation_rate",
+    "structure_metadata_coverage",
+    "overlap_waste_ratio",
+    "answer_bearing_leaf_recall_at_k",
+    "parent_expansion_completeness",
+    "boundary_integrity_rate",
+    "canonical_source_accuracy",
+    "source_contamination_rate",
+    "exact_span_citation_precision",
+    "exact_span_citation_recall",
+    "index_nodes_per_document",
+    "index_storage_ratio",
+    "inner_doc_retrieval_p50_ms",
+    "inner_doc_retrieval_p95_ms"
+  ],
+  "non_recommendations": [
+    "one global chunk size search",
+    "global source-aware switch",
+    "global reranking",
+    "GraphRAG or agentic multi-round retrieval for every query",
+    "abstractive summary as the only citation source",
+    "global ColBERT deployment before top-document evidence localization is fixed"
+  ]
+}

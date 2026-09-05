@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "status": "committed_code_and_replay_verified_live_not_completed",
+  "branch": "develop",
+  "integration_revision": "197c9b7e0f34107a8046ac5ce1c4ba5d3081d3bb",
+  "validated_code_revision": "7ad823c511f1f242519a819df8f666428f6ed50a",
+  "input_sha256": "b7663976eee8e2499de4b4d3ffe609f0310e107f34dc3a77c5e6d8a8d2496c3b",
+  "implementation_sha256": "872a4902cfbbd9d1f6388122e4cc5ba39f3c4f1da6288caf6e5bd42db7655821",
+  "experiment_runner_sha256": "efcf74631bcaeb4914eedd682a88879dc622fdbb7d3c6181b032a4639d3a3f86",
+  "validation": {
+    "mac_python_unittest": {"tests": 103, "failures": 0, "errors": 0, "skipped": 0},
+    "a40_java_clean_verify": {"tests": 88, "failures": 0, "errors": 0, "skipped": 0, "build_success": true},
+    "a40_build_path": "/srv/paismart-develop-experiment/repro-adaptive-v1/builds/209fc00-generation-test-fix",
+    "java_test_source_sha256_both_hosts": "7997f94b79fadc871e83e0fa296989da93b0407d31465eab807e944f31554fcc"
+  },
+  "replay": {
+    "questions": 500,
+    "evaluable_paired_questions": 480,
+    "errors_per_arm": 0,
+    "forced_configuration": "fixed Fast evidence ablation, deterministic plan, no mapper/verifier/secondary retrieval",
+    "max_rendered_characters_each_arm": 10000,
+    "max_contexts_each_arm": 12,
+    "baseline_prompt_lexical_recall": 0.634940237408372,
+    "v1_prompt_lexical_recall": 0.6500517086933832,
+    "v2_prompt_lexical_recall": 0.6596417675921266,
+    "v2_vs_legacy_evaluable_proxy_gains": 218,
+    "v2_vs_legacy_evaluable_proxy_regressions": 111,
+    "v2_vs_legacy_evaluable_proxy_ties": 151,
+    "baseline_mean_rendered_chars": 9997.594,
+    "v2_mean_rendered_chars": 9652.388,
+    "v1_outputs": "/tmp/adaptive_rag/cycle-197c9b7-replay-v1",
+    "v2_development_outputs": "/tmp/adaptive_rag/cycle-197c9b7-replay-v2",
+    "v2_clean_commit_outputs": "/tmp/adaptive_rag/cycle-final-replay-v2",
+    "interpretation": "Lexical proxies only; NOT answer accuracy. The 500 questions are development diagnostics, not unseen holdout. Earlier development gain/regression counters included 20 non-evaluable rows; final counters consistently exclude them."
+  },
+  "known_case_prompt_checks": {
+    "qst_0026": {"baseline_has_tens_of_minutes": false, "candidate_has_tens_of_minutes": true, "candidate_preserves_snapshot_and_database_size_conditions": true},
+    "qst_0174": {"baseline_field_names_present": 2, "candidate_field_names_present": 11, "candidate_has_complete_field_list": true}
+  },
+  "live_generation": {
+    "status": "not_completed_tool_execution_blocked",
+    "planned_questions": 20,
+    "completed_questions": 0,
+    "completed_model_calls": 0,
+    "model": "qwen-flash",
+    "new_answer_quality_claim": null,
+    "note": "Mac login-shell key presence was confirmed without exposing its value. The live invocation was blocked by the execution tool before it ran; no workaround or key transfer was attempted."
+  },
+  "promotion": {"default_strategy": "legacy", "candidate_strategy": "query-spans", "candidate_version": "query-spans-v2", "promoted": false, "pushed": false, "online_services_changed": false}
+}

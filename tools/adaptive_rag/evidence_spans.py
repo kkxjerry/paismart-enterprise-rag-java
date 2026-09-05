@@ -10,10 +10,11 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from functools import lru_cache
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-STRATEGY_VERSION = "query-spans-v2"
+STRATEGY_VERSION = "query-spans-v3"
 _CITATION = re.compile(r"S[1-9][0-9]*\Z")
 _WORDS = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*|[\u3400-\u9fff]+", re.IGNORECASE)
 _STOP = frozenset(
@@ -30,7 +31,8 @@ _DURATION_VALUE = re.compile(
 _LIST_QUESTION = re.compile(r"\b(?:fields?|enumerate|list|mandatory|required)\b|字段|列出", re.I)
 
 
-def terms(text: str) -> set[str]:
+@lru_cache(maxsize=32768)
+def terms(text: str) -> frozenset[str]:
     """Small bilingual lexical feature set, not a semantic fact validator."""
     result: set[str] = set()
     for value in _WORDS.findall(text.casefold()):
@@ -41,10 +43,16 @@ def terms(text: str) -> set[str]:
         else:
             result.add(value[:-1] if len(value) > 4 and value.endswith("s")
                        and not value.endswith("ss") else value)
-    return result
+    return frozenset(result)
 
 
-def paragraph_windows(text: str, *, whole_chunk_chars: int = 2400) -> list[tuple[int, int, int, int]]:
+@lru_cache(maxsize=8192)
+def paragraph_windows(
+    text: str,
+    *,
+    whole_chunk_chars: int = 2400,
+    neighbor_paragraphs: int = 1,
+) -> list[tuple[int, int, int, int]]:
     """Preserve small chunks and indivisible lists/tables/code without slicing lines.
 
 For longer prose retain the matching paragraph and its immediate neighbours.
@@ -60,9 +68,35 @@ remain explicit in the trace and this strategy is opt-in pending paired evaluati
     if not ranges:
         return [(0, len(text), 0, len(text))]
     return list(dict.fromkeys(
-        (ranges[max(0, i - 1)][0], ranges[min(len(ranges) - 1, i + 1)][1], ranges[i][0], ranges[i][1])
+        (
+            ranges[max(0, i - neighbor_paragraphs)][0],
+            ranges[min(len(ranges) - 1, i + neighbor_paragraphs)][1],
+            ranges[i][0],
+            ranges[i][1],
+        )
         for i in range(len(ranges))
     ))
+
+
+@dataclass(frozen=True)
+class PackingConfig:
+    whole_chunk_chars: int = 2400
+    neighbor_paragraphs: int = 1
+    rank_exponent: float = 0.75
+    diversity_penalty: float = 0.15
+    density_exponent: float = 0.5
+    density_scale_chars: float = 600.0
+    duration_boost: float = 2.0
+    list_boost: float = 1.5
+    evidence_score_weight: float = 0.0
+    query_coverage_weight: float = 0.0
+    saturation_power: float = 1.0
+
+
+DEFAULT_PACKING_CONFIG = PackingConfig(
+    density_exponent=0.4,
+    query_coverage_weight=0.2,
+)
 
 
 @dataclass(frozen=True)
@@ -104,6 +138,7 @@ def pack_evidence(
     required_citations: Sequence[str] = (),
     max_chars: int,
     max_contexts: int,
+    config: PackingConfig | None = None,
 ) -> PackedEvidence:
     """Soft source diversity replaces hard per-document deletion.
 
@@ -113,6 +148,9 @@ Returned lexical affinities MUST NOT be reported as factual support/coverage.
 """
     if max_chars <= 0 or max_contexts <= 0:
         raise ValueError("evidence budgets must be positive")
+    selected_config = config or DEFAULT_PACKING_CONFIG
+    if selected_config.whole_chunk_chars <= 0 or selected_config.neighbor_paragraphs < 0:
+        raise ValueError("invalid packing window configuration")
     sources: dict[str, dict[str, Any]] = {}
     ordinals: dict[str, int] = {}
     diagnostics: list[dict[str, Any]] = []
@@ -137,7 +175,15 @@ Returned lexical affinities MUST NOT be reported as factual support/coverage.
         text = str(source.get("text") or "")
         if not text.strip():
             continue
-        spans = [(0, len(text), 0, len(text))] if citation in required_set else paragraph_windows(text)
+        spans = (
+            [(0, len(text), 0, len(text))]
+            if citation in required_set
+            else paragraph_windows(
+                text,
+                whole_chunk_chars=selected_config.whole_chunk_chars,
+                neighbor_paragraphs=selected_config.neighbor_paragraphs,
+            )
+        )
         for start, end, focus_start, focus_end in spans:
             body = text[focus_start:focus_end]
             body_terms = terms(body)
@@ -146,11 +192,11 @@ Returned lexical affinities MUST NOT be reported as factual support/coverage.
                 score = sum(weights.get(term, 1.0) for term in sorted(body_terms & tokens))
                 # Generic answer-shape hints are ranking signals, never proof.
                 if score and _DURATION_QUESTION.search(query + " " + question) and _DURATION_VALUE.search(body):
-                    score += 2.0
+                    score += selected_config.duration_boost
                 if score and _LIST_QUESTION.search(query + " " + question) and (
                     _STRUCTURED.search(body) or (":" in body and body.count(",") >= 2)
                 ):
-                    score += 1.5
+                    score += selected_config.list_boost
                 affinities.append(score)
             candidates.append(_Candidate(citation, source, start, end, ordinals[citation], tuple(affinities)))
 
@@ -191,9 +237,14 @@ Returned lexical affinities MUST NOT be reported as factual support/coverage.
             break
 
         def utility(candidate: _Candidate) -> tuple[float, int, int]:
-            relevance = sum(score / (1 + lexical_hits[i]) for i, score in enumerate(candidate.affinities))
-            diversity = 1 + 0.15 * per_document[str(candidate.context.get("doc_id") or candidate.citation)]
-            density = math.sqrt(max(1.0, len(candidate.block) / 600.0))
+            relevance = sum(
+                score / ((1 + lexical_hits[i]) ** selected_config.saturation_power)
+                for i, score in enumerate(candidate.affinities)
+            )
+            diversity = 1 + selected_config.diversity_penalty * per_document[
+                str(candidate.context.get("doc_id") or candidate.citation)
+            ]
+            density = max(1.0, len(candidate.block) / selected_config.density_scale_chars) ** selected_config.density_exponent
             # Retrieval ranks contain information absent from local lexical overlap.
             # Without this prior, keyword-dense unrelated chunks displace the very
             # document the retriever correctly found (observed on real replay).
@@ -201,9 +252,32 @@ Returned lexical affinities MUST NOT be reported as factual support/coverage.
             rank = float(raw_rank) if isinstance(raw_rank, (int, float)) and not isinstance(raw_rank, bool) else 1.0
             if not math.isfinite(rank) or rank < 1:
                 rank = 1.0
-            source_prior = rank ** -0.75
-            return ((relevance + 0.001 / (1 + candidate.ordinal)) * source_prior / (diversity * density),
-                    -candidate.ordinal, -candidate.start)
+            source_prior = rank ** -selected_config.rank_exponent
+            raw_evidence_score = candidate.context.get("evidence_score")
+            evidence_score = (
+                float(raw_evidence_score)
+                if isinstance(raw_evidence_score, (int, float)) and not isinstance(raw_evidence_score, bool)
+                else 0.0
+            )
+            raw_query_coverage = candidate.context.get("query_coverage")
+            query_coverage = (
+                float(raw_query_coverage)
+                if isinstance(raw_query_coverage, (int, float)) and not isinstance(raw_query_coverage, bool)
+                else 0.0
+            )
+            metadata_prior = (
+                1.0
+                + selected_config.evidence_score_weight * max(0.0, min(1.5, evidence_score))
+                + selected_config.query_coverage_weight * max(0.0, min(1.0, query_coverage))
+            )
+            return (
+                (relevance + 0.001 / (1 + candidate.ordinal))
+                * source_prior
+                * metadata_prior
+                / (diversity * density),
+                -candidate.ordinal,
+                -candidate.start,
+            )
 
         add(max(available, key=utility))
 

@@ -29,6 +29,13 @@ from tools.adaptive_rag.controller import build_generation_messages, validate_ad
 from tools.adaptive_rag.requirements import deterministic_requirement_plan
 from tools.adaptive_rag_pipeline import adaptive_implementation_sha256
 from tools.qwen_plus_rag_pipeline import QwenClient, fact_scores, load_jsonl, score_result
+from tools.rag_packing_loop10 import (
+    CONDITION_RE,
+    NEGATION_RE,
+    exact_recall,
+    fact_coverage,
+    subset_coverage,
+)
 
 SEED = "rag-evidence-cycle-v1"
 FIELDS = ("timestamp", "service_a", "service_a_version", "service_b", "service_b_version",
@@ -84,7 +91,23 @@ def summarize(records: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[s
         aggregates[arm] = {
             "rows": len(values), "errors": len(values) - len(valid), "evaluable": len(evaluable),
             "prompt_lexical_recall": avg("prompt_lexical_recall"),
+            "prompt_exact_value_recall": avg("prompt_exact_value_recall"),
+            "prompt_requirement_evidence_coverage": avg("prompt_requirement_evidence_coverage"),
+            "prompt_list_item_recall": avg("prompt_list_item_recall"),
+            "prompt_condition_exception_recall": avg("prompt_condition_exception_recall"),
             "answer_lexical_recall": avg("answer_lexical_recall"),
+            "answer_exact_value_accuracy": avg("answer_exact_value_accuracy"),
+            "requirement_completion": avg("requirement_completion"),
+            "answer_list_completeness": avg("answer_list_completeness"),
+            "answer_condition_accuracy": avg("answer_condition_accuracy"),
+            "answer_negation_accuracy": avg("answer_negation_accuracy"),
+            "answer_fact_coverage": avg("answer_fact_coverage"),
+            "gold_answer_f1": avg("gold_answer_f1"),
+            "citation_id_validity": avg("citation_id_validity", valid),
+            "abstention_accuracy": avg("abstention_accuracy", valid),
+            "claim_citation_support_precision": None,
+            "claim_citation_support_recall": None,
+            "unsupported_claim_rate": None,
             "mean_rendered_chars": avg("rendered_chars", valid),
             "mean_latency_ms": avg("latency_ms", valid),
             "abstentions": sum(r.get("generation", {}).get("answerable") is False for r in valid),
@@ -173,18 +196,27 @@ def main() -> int:
             question = str(row.get("question") or "")
             plan = deterministic_requirement_plan(question)
             for arm in (arms if index % 2 == 0 else list(reversed(arms))):
+                facts = [str(value) for value in row.get("answer_facts") or [] if str(value).strip()]
                 record: dict[str, Any] = {"qid": qid, "question": question, "strategy": arm,
                                           "gold_answer": row.get("gold_answer"), "error": None,
-                                          "evaluable": bool(row.get("answer_facts")) and row.get("question_type") != "info_not_found"}
+                                          "question_type": row.get("question_type"),
+                                          "evaluable": bool(facts) and row.get("question_type") != "info_not_found"}
                 raw_generation: dict[str, Any] = {}
                 try:
                     evidence = DynamicEvidenceBudget(arm).build(row.get("contexts") or [], plan=plan,
                                                                 decision=decision, question=question)
+                    prompt_text = "\n".join(c["text"] for c in evidence.contexts)
                     record.update({"rendered_chars": evidence.rendered_chars, "budget": evidence.to_dict(),
                                    "selected_citations": [c["citation_id"] for c in evidence.contexts],
                                    "selected_contexts": list(evidence.contexts),
                                    "prompt_checks": anchor_checks(qid, evidence.rendered),
-                                   "prompt_lexical_recall": fact_scores("\n".join(c["text"] for c in evidence.contexts), row.get("answer_facts") or [])[0]})
+                                   "prompt_lexical_recall": fact_scores(prompt_text, facts)[0] if facts else None,
+                                   "prompt_exact_value_recall": exact_recall(prompt_text, facts),
+                                   "prompt_requirement_evidence_coverage": fact_coverage(prompt_text, facts),
+                                   "prompt_list_item_recall": fact_coverage(prompt_text, facts) if len(facts) >= 5 else None,
+                                   "prompt_condition_exception_recall": subset_coverage(
+                                       prompt_text, facts, lambda fact: bool(CONDITION_RE.search(fact))
+                                   )})
                     if client:
                         if not evidence.contexts:
                             raise ValueError("no evidence fits the fixed budget; generation not called")
@@ -194,13 +226,27 @@ def main() -> int:
                             raw_generation.update(payload)
                             return validate_adaptive_generation(payload, valid_citations=set(record["selected_citations"]), requirement_ids={"R1"})
                         result = client.complete_json(messages=messages, max_tokens=1024, temperature=0.0, validator=validate)
+                        answer_text = str(result.value["answer"])
                         record.update({"generation": result.value, "raw_generation": raw_generation,
                                        "usage": result.usage, "latency_ms": result.latency_ms, "attempts": result.attempts,
                                        "request_id": result.request_id, "returned_model": result.returned_model,
-                                       "answer_checks": anchor_checks(qid, result.value["answer"])})
+                                       "answer_checks": anchor_checks(qid, answer_text),
+                                       "answer_exact_value_accuracy": exact_recall(answer_text, facts),
+                                       "requirement_completion": fact_coverage(answer_text, facts),
+                                       "answer_list_completeness": fact_coverage(answer_text, facts) if len(facts) >= 5 else None,
+                                       "answer_condition_accuracy": subset_coverage(
+                                           answer_text, facts, lambda fact: bool(CONDITION_RE.search(fact))
+                                       ),
+                                       "answer_negation_accuracy": subset_coverage(
+                                           answer_text, facts, lambda fact: bool(NEGATION_RE.search(fact))
+                                       )})
                         metrics = score_result(row, selected_contexts=list(evidence.contexts),
                                                answerable=result.value["answerable"], answer=result.value["answer"], citations=result.value["citations"])
                         record["answer_lexical_recall"] = metrics["answer_fact_token_recall"]
+                        record["answer_fact_coverage"] = metrics["answer_fact_coverage_proxy"]
+                        record["gold_answer_f1"] = metrics["gold_answer_token_f1"]
+                        record["citation_id_validity"] = metrics["citation_precision"]
+                        record["abstention_accuracy"] = metrics["unanswerable_abstain_correct"]
                         print(f"LIVE {qid} {arm} answerable={result.value['answerable']} tokens={result.usage['total_tokens']}", flush=True)
                 except Exception as exc:
                     record.update({"error": str(exc), "raw_generation": raw_generation,

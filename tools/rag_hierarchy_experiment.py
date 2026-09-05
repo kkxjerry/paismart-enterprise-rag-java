@@ -254,7 +254,7 @@ def aggregate_live(records: list[dict[str, Any]]) -> dict[str, Any]:
                 field: sum(isinstance(value.get(field), (int, float)) for value in valid)
                 for field in fields
             },
-            "model_calls": len(valid),
+            "model_calls": sum(int(value.get("model_calls") or 1) for value in valid),
             "usage": {
                 key: sum(int((value.get("usage") or {}).get(key) or 0) for value in values)
                 for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")
@@ -283,6 +283,7 @@ def call(
         "returned_model": result.returned_model,
         "attempts": result.attempts,
         "raw_generation": raw,
+        "model_calls": 1,
     }
 
 

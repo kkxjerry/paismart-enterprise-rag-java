@@ -28,12 +28,35 @@ class HierarchicalSourceChunkerTest {
                 .filter(value -> value.text().contains("tens of minutes"))
                 .findFirst()
                 .orElseThrow();
-        assertThat(restore.sectionPath()).isEqualTo("Runbook / Rollback");
+        assertThat(restore.sectionPath()).contains("Runbook", "Rollback");
         assertThat(restore.parentText()).contains("Take a snapshot", "database size");
         assertThat(restore.text()).isEqualTo(
                 restore.parentText().substring(restore.parentStart(), restore.parentEnd()));
         assertThat(restore.contextPrefix()).contains(
-                "title=Private Upgrade", "source=confluence", "section=Runbook / Rollback");
+                "title=Private Upgrade", "source=confluence", "Runbook", "Rollback");
+    }
+
+    @Test
+    void longMarkdownUsesBoundedContinuousParentsInsteadOfOneParentPerHeading() {
+        StringBuilder text = new StringBuilder();
+        for (int index = 1; index <= 40; index++) {
+            text.append("## Section ").append(index).append('\n');
+            text.append(("Section body sentence with stable content and an exact value " + index + ". ").repeat(5));
+            text.append("\n\n");
+        }
+
+        List<SourceAwareChunker.Segment> values = HierarchicalSourceChunker.chunk(
+                "confluence", "Large page", text.toString(), 500, 50);
+        long parents = values.stream().map(SourceAwareChunker.Segment::parentId).distinct().count();
+
+        assertThat(text.length()).isGreaterThan(10_000);
+        assertThat(parents).isBetween(5L, 10L);
+        assertThat(values.size()).isLessThanOrEqualTo(55);
+        assertThat(values).allSatisfy(value -> {
+            assertThat(value.parentText().length()).isLessThanOrEqualTo(2_000);
+            assertThat(value.text()).isEqualTo(
+                    value.parentText().substring(value.parentStart(), value.parentEnd()));
+        });
     }
 
     @Test
@@ -88,8 +111,8 @@ class HierarchicalSourceChunkerTest {
                 .filter(value -> value.text().contains("p95 target"))
                 .findFirst()
                 .orElseThrow();
-        assertThat(turn.kind()).isEqualTo("transcript_turn");
-        assertThat(turn.speaker()).isEqualTo("Alice");
+        assertThat(turn.kind()).isEqualTo("transcript_window");
+        assertThat(turn.speaker()).contains("Alice");
         assertThat(turn.eventTime()).isEqualTo("00:10");
         assertThat(turn.sectionPath()).isEqualTo("transcript");
         assertThat(values).anySatisfy(value -> {
@@ -164,7 +187,7 @@ class HierarchicalSourceChunkerTest {
         List<EnterpriseRagImporter.Chunk> chunks = EnterpriseRagImporter.buildChunks(
                 config, List.of(document), java.util.Map.of());
 
-        assertThat(chunks).hasSize(2);
+        assertThat(chunks).hasSize(1);
         EnterpriseRagImporter.Chunk answer = chunks.stream()
                 .filter(chunk -> chunk.source().path("textContent").asText().contains("20 minutes"))
                 .findFirst()

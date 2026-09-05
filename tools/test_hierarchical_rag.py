@@ -186,13 +186,33 @@ class CanonicalGenerationTest(unittest.TestCase):
         )
         self.assertEqual([value["citation_id"] for value in contexts_for_bindings(values, bindings)], ["S2"])
 
-    def test_validator_rejects_cross_document_citation(self) -> None:
+    def test_validator_normalizes_doc_id_to_one_concrete_citation_document(self) -> None:
         payload = {
             "requirements": [{
                 "id": "R1",
-                "canonical_doc_id": "right",
+                "canonical_doc_id": "copied-wrong-id",
                 "answer": "Use the page [S1].",
                 "citations": ["S1"],
+                "missing": False,
+            }]
+        }
+        result = validate_canonical_generation(
+            payload,
+            valid_citations={"S1", "S2"},
+            citation_to_doc={"S1": "actual", "S2": "other"},
+            requirement_ids={"R1"},
+            single_source=True,
+        )
+        self.assertEqual(result["canonical_doc_ids"], ["actual"])
+        self.assertTrue(result["requirements"][0]["normalized"])
+
+    def test_validator_rejects_true_cross_document_citations(self) -> None:
+        payload = {
+            "requirements": [{
+                "id": "R1",
+                "canonical_doc_id": "d1",
+                "answer": "Mixed answer [S1][S2].",
+                "citations": ["S1", "S2"],
                 "missing": False,
             }]
         }
@@ -200,7 +220,7 @@ class CanonicalGenerationTest(unittest.TestCase):
             validate_canonical_generation(
                 payload,
                 valid_citations={"S1", "S2"},
-                citation_to_doc={"S1": "wrong", "S2": "right"},
+                citation_to_doc={"S1": "d1", "S2": "d2"},
                 requirement_ids={"R1"},
                 single_source=True,
             )

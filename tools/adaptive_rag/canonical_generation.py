@@ -316,23 +316,39 @@ def validate_canonical_generation(
         answer = str(raw.get("answer") or "").strip()
         canonical_doc = str(raw.get("canonical_doc_id") or "").strip()
         citations = raw.get("citations")
-        probe = validate_generation(
-            {
-                "answerable": not is_missing,
-                "answer": answer,
-                "citations": citations,
-            },
-            valid_citations=valid_citations,
-        )
-        answer = str(probe["answer"])
-        values = list(probe["citations"])
+        normalized = False
         if is_missing:
-            if canonical_doc or values or answer != "INSUFFICIENT_EVIDENCE":
-                raise PipelineError(f"missing {requirement_id} must not bind a source")
+            # Citations attached to an explicit missing row are formatting noise,
+            # not factual support. Drop them instead of spending a retry, and keep
+            # the visible result fail-closed as INSUFFICIENT_EVIDENCE.
+            normalized = bool(canonical_doc or citations or answer != "INSUFFICIENT_EVIDENCE")
+            canonical_doc = ""
+            answer = "INSUFFICIENT_EVIDENCE"
+            values: list[str] = []
             missing.append(requirement_id)
         else:
+            probe = validate_generation(
+                {
+                    "answerable": True,
+                    "answer": answer,
+                    "citations": citations,
+                },
+                valid_citations=valid_citations,
+            )
+            answer = str(probe["answer"])
+            values = list(probe["citations"])
             if not canonical_doc:
                 raise PipelineError(f"supported {requirement_id} requires canonical_doc_id")
+            citation_docs = {
+                citation_to_doc[citation]
+                for citation in values
+                if citation in citation_to_doc
+            }
+            if len(citation_docs) == 1 and canonical_doc not in citation_docs:
+                # The concrete S* evidence identity is auditable and less prone to
+                # a copied doc-id typo than a free-form canonical_doc_id field.
+                canonical_doc = next(iter(citation_docs))
+                normalized = True
             wrong = [citation for citation in values if citation_to_doc.get(citation) != canonical_doc]
             if wrong:
                 raise PipelineError(
@@ -355,6 +371,7 @@ def validate_canonical_generation(
                 "answer": answer,
                 "citations": values,
                 "missing": is_missing,
+                "normalized": normalized,
             }
         )
     if observed != requirement_ids:
@@ -392,7 +409,14 @@ def build_global_generation_messages(
         leaves_per_document=leaves_per_document,
         max_chars=max_chars,
     )
-    user = f"Question:\n{question}\n\nExtractive document hierarchy:\n{hierarchy['rendered']}"
+    allowed_citations = ", ".join(hierarchy["source_citations"])
+    allowed_documents = ", ".join(value["doc_id"] for value in hierarchy["documents"])
+    user = (
+        f"Question:\n{question}\n\n"
+        f"Allowed citation IDs (use no others): {allowed_citations}\n"
+        f"Allowed document IDs (use no others): {allowed_documents}\n\n"
+        f"Extractive document hierarchy:\n{hierarchy['rendered']}"
+    )
     return [
         {"role": "system", "content": _GLOBAL_PROMPT},
         {"role": "user", "content": user},

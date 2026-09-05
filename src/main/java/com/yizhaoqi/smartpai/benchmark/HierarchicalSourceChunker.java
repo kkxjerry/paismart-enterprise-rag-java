@@ -30,7 +30,7 @@ final class HierarchicalSourceChunker {
     private static final Pattern LIST_OR_TABLE = Pattern.compile(
             "^\\s*(?:[-*+]\\s+|\\d+[.)]\\s+|\\|.*\\|\\s*$)");
     private static final List<String> CUT_SEPARATORS = List.of(
-            "\\n\\n", "\\n", ". ", "? ", "! ", "; ", ", ", " ");
+            "\n\n", "\n", ". ", "? ", "! ", "; ", ", ", " ");
 
     private HierarchicalSourceChunker() {
     }
@@ -53,12 +53,14 @@ final class HierarchicalSourceChunker {
         if (normalized.isBlank()) {
             return List.of();
         }
+        int parentSize = Math.max(1_600, Math.min(2_400, leafSize * 4));
         List<Parent> parents = switch (source) {
-            case "confluence", "google_drive" -> markdownParents(normalized);
+            case "confluence", "google_drive" -> markdownWindowParents(normalized, parentSize);
             case "gmail" -> gmailParents(normalized);
             case "fireflies" -> firefliesParents(normalized);
             default -> List.of(new Parent("parent-1", "body", value(title), "", "", normalized));
         };
+        parents = boundParents(parents, parentSize);
         List<SourceAwareChunker.Segment> output = new ArrayList<>();
         int parentIndex = 0;
         for (Parent parent : parents) {
@@ -106,7 +108,7 @@ final class HierarchicalSourceChunker {
         return List.copyOf(output);
     }
 
-    private static List<Parent> markdownParents(String text) {
+    private static List<Parent> markdownWindowParents(String text, int parentSize) {
         Matcher matcher = MARKDOWN_HEADING.matcher(text);
         List<Heading> headings = new ArrayList<>();
         while (matcher.find()) {
@@ -116,36 +118,60 @@ final class HierarchicalSourceChunker {
                     matcher.group(1).length(),
                     matcher.group(2).trim()));
         }
-        if (headings.isEmpty()) {
-            return paragraphParents(text, "section", "body");
-        }
+        List<Range> windows = exactSlices(text, 0, text.length(), parentSize, 0);
         List<Parent> output = new ArrayList<>();
-        if (headings.get(0).start() > 0) {
-            String preamble = text.substring(0, headings.get(0).start()).trim();
-            if (!preamble.isBlank()) {
-                output.add(new Parent("preamble", "section", "preamble", "", "", preamble));
+        for (int index = 0; index < windows.size(); index++) {
+            Range window = windows.get(index);
+            String raw = text.substring(window.start(), window.end());
+            int left = 0;
+            int right = raw.length();
+            while (left < right && Character.isWhitespace(raw.charAt(left))) {
+                left++;
             }
+            while (right > left && Character.isWhitespace(raw.charAt(right - 1))) {
+                right--;
+            }
+            if (left >= right) {
+                continue;
+            }
+            int absoluteStart = window.start() + left;
+            int absoluteEnd = window.start() + right;
+            String section = markdownSectionAt(headings, absoluteStart, absoluteEnd);
+            output.add(new Parent(
+                    "markdown-window-" + (index + 1),
+                    "section_window",
+                    section,
+                    "",
+                    "",
+                    text.substring(absoluteStart, absoluteEnd)));
         }
+        return output;
+    }
+
+    private static String markdownSectionAt(List<Heading> headings, int start, int end) {
         List<String> stack = new ArrayList<>();
-        for (int index = 0; index < headings.size(); index++) {
-            Heading heading = headings.get(index);
+        List<String> observed = new ArrayList<>();
+        for (Heading heading : headings) {
+            if (heading.start() >= end) {
+                break;
+            }
             while (stack.size() >= heading.level()) {
                 stack.remove(stack.size() - 1);
             }
             stack.add(heading.label());
-            int end = index + 1 < headings.size() ? headings.get(index + 1).start() : text.length();
-            String body = text.substring(heading.end(), end).trim();
-            if (!body.isBlank()) {
-                output.add(new Parent(
-                        "section-" + (index + 1),
-                        "section",
-                        String.join(" / ", stack),
-                        "",
-                        "",
-                        body));
+            if (heading.end() > start) {
+                String path = String.join(" / ", stack);
+                if (!observed.contains(path)) {
+                    observed.add(path);
+                }
             }
         }
-        return output;
+        if (!observed.isEmpty()) {
+            return observed.size() == 1
+                    ? observed.get(0)
+                    : observed.get(0) + " … " + observed.get(observed.size() - 1);
+        }
+        return stack.isEmpty() ? "body" : String.join(" / ", stack);
     }
 
     private static List<Parent> firefliesParents(String text) {
@@ -233,54 +259,125 @@ final class HierarchicalSourceChunker {
         return output;
     }
 
+    private static List<Parent> boundParents(List<Parent> parents, int parentSize) {
+        List<Parent> output = new ArrayList<>();
+        for (Parent parent : parents) {
+            if (parent.text().length() <= parentSize) {
+                output.add(parent);
+                continue;
+            }
+            List<Range> pieces = exactSlices(parent.text(), 0, parent.text().length(), parentSize, 0);
+            int index = 0;
+            for (Range piece : pieces) {
+                String text = parent.text().substring(piece.start(), piece.end()).trim();
+                if (text.isBlank()) {
+                    continue;
+                }
+                index++;
+                String section = parent.sectionPath() + " / parent-part-" + index;
+                output.add(new Parent(
+                        parent.id() + "-part-" + index,
+                        parent.kind(),
+                        section,
+                        parent.speaker(),
+                        parent.threadId(),
+                        text,
+                        parent.eventTime()));
+            }
+        }
+        return output;
+    }
+
     private static List<Leaf> leaves(Parent parent, int leafSize, int overlap) {
         if (parent.kind().equals("meeting_transcript")) {
-            List<Leaf> turns = transcriptLeaves(parent);
+            List<Leaf> turns = transcriptLeaves(parent, leafSize);
             if (!turns.isEmpty()) {
                 return turns;
             }
         }
-        List<Range> paragraphs = paragraphRanges(parent.text());
         List<Leaf> output = new ArrayList<>();
-        for (Range paragraph : paragraphs) {
-            String value = parent.text().substring(paragraph.start(), paragraph.end());
-            if (isStructured(value)) {
-                output.addAll(structuredLeaves(parent, paragraph));
-            } else {
-                for (Range piece : exactSlices(parent.text(), paragraph.start(), paragraph.end(), leafSize, overlap)) {
-                    addLeaf(output, parent, piece, "leaf_text", parent.speaker(), parent.eventTime());
-                }
+        String kind = isStructured(parent.text()) ? "structured_leaf" : "leaf_text";
+        for (Range piece : exactSlices(parent.text(), 0, parent.text().length(), leafSize, overlap)) {
+            addLeaf(output, parent, piece, kind, parent.speaker(), parent.eventTime());
+        }
+        return output;
+    }
+
+    private static List<Leaf> transcriptLeaves(Parent parent, int leafSize) {
+        Matcher matcher = TRANSCRIPT_TURN.matcher(parent.text());
+        List<TranscriptRange> ranges = new ArrayList<>();
+        while (matcher.find()) {
+            ranges.add(new TranscriptRange(
+                    matcher.start(),
+                    matcher.end(),
+                    value(matcher.group("speaker")),
+                    value(matcher.group("time"))));
+        }
+        List<Leaf> output = new ArrayList<>();
+        if (ranges.isEmpty()) {
+            return output;
+        }
+        int start = ranges.get(0).start();
+        int end = ranges.get(0).end();
+        List<String> speakers = new ArrayList<>();
+        if (!ranges.get(0).speaker().isBlank()) {
+            speakers.add(ranges.get(0).speaker());
+        }
+        String firstTime = ranges.get(0).time();
+        for (int index = 1; index < ranges.size(); index++) {
+            TranscriptRange next = ranges.get(index);
+            if (next.end() - start > leafSize && end > start) {
+                addLeaf(output, parent, new Range(start, end), "transcript_window",
+                        String.join(",", speakers), firstTime);
+                start = next.start();
+                speakers.clear();
+                firstTime = next.time();
+            }
+            end = next.end();
+            if (!next.speaker().isBlank() && !speakers.contains(next.speaker())) {
+                speakers.add(next.speaker());
             }
         }
+        addLeaf(output, parent, new Range(start, end), "transcript_window",
+                String.join(",", speakers), firstTime);
         return output;
     }
 
-    private static List<Leaf> transcriptLeaves(Parent parent) {
-        Matcher matcher = TRANSCRIPT_TURN.matcher(parent.text());
-        List<Leaf> output = new ArrayList<>();
-        while (matcher.find()) {
-            int start = matcher.start();
-            int end = matcher.end();
-            String speaker = value(matcher.group("speaker"));
-            String time = value(matcher.group("time"));
-            addLeaf(output, parent, new Range(start, end), "transcript_turn", speaker, time);
-        }
-        return output;
-    }
-
-    private static List<Leaf> structuredLeaves(Parent parent, Range paragraph) {
-        List<Leaf> output = new ArrayList<>();
+    private static List<Leaf> structuredLeaves(Parent parent, Range paragraph, int leafSize) {
+        List<Range> ranges = new ArrayList<>();
         int cursor = paragraph.start();
         String block = parent.text().substring(paragraph.start(), paragraph.end());
         for (String raw : block.split("\\n", -1)) {
             int end = cursor + raw.length();
             if (!raw.isBlank()) {
-                addLeaf(output, parent, new Range(cursor, end),
-                        raw.stripLeading().startsWith("|") ? "table_row" : "list_item",
-                        parent.speaker(), parent.eventTime());
+                ranges.add(new Range(cursor, end));
             }
             cursor = Math.min(parent.text().length(), end + 1);
         }
+        String kind = block.stripLeading().startsWith("|") ? "table_rows" : "list_items";
+        return groupedLeaves(parent, ranges, leafSize, kind);
+    }
+
+    private static List<Leaf> groupedLeaves(
+            Parent parent,
+            List<Range> ranges,
+            int leafSize,
+            String kind) {
+        List<Leaf> output = new ArrayList<>();
+        if (ranges.isEmpty()) {
+            return output;
+        }
+        int start = ranges.get(0).start();
+        int end = ranges.get(0).end();
+        for (int index = 1; index < ranges.size(); index++) {
+            Range next = ranges.get(index);
+            if (next.end() - start > leafSize && end > start) {
+                addLeaf(output, parent, new Range(start, end), kind, parent.speaker(), parent.eventTime());
+                start = next.start();
+            }
+            end = next.end();
+        }
+        addLeaf(output, parent, new Range(start, end), kind, parent.speaker(), parent.eventTime());
         return output;
     }
 
@@ -434,6 +531,9 @@ final class HierarchicalSourceChunker {
     }
 
     private record Range(int start, int end) {
+    }
+
+    private record TranscriptRange(int start, int end, String speaker, String time) {
     }
 
     private record Parent(

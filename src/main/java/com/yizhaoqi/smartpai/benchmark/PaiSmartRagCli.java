@@ -20,6 +20,7 @@ public final class PaiSmartRagCli {
             case "lifecycle" -> IndexLifecycleCommand.main(commandArgs);
             case "serve-search" -> RagSearchServer.main(commandArgs);
             case "evaluate" -> EnterpriseRagJavaBenchmark.main(commandArgs);
+            case "chunk-audit" -> ChunkingAuditCommand.main(commandArgs);
             default -> throw new IllegalArgumentException("unknown command: " + args[0]);
         }
     }
@@ -38,6 +39,7 @@ public final class PaiSmartRagCli {
                   lifecycle     Inspect or atomically promote a blue-green index alias
                   serve-search  Authenticated tenant/ACL-aware online retrieval API
                   evaluate      Run retrieval and optional bounded Java EvidenceBuilder evaluation
+                  chunk-audit   Measure chunk/parent expansion without embeddings or index writes
 
                 Reproducible evaluation:
                   java -jar target/paismart-enterprise-rag.jar evaluate \\

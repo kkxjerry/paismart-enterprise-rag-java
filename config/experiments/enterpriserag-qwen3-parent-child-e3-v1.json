@@ -31,7 +31,7 @@
     "top-k": 50,
     "evidence-enabled": true,
     "evidence-top-documents": 10,
-    "evidence-candidate-chunks-per-document": 12,
+    "evidence-candidate-chunks-per-document": 16,
     "evidence-chunks-per-document": 3,
     "evidence-token-budget": 6000,
     "evidence-per-document-token-budget": 1200,
@@ -53,8 +53,8 @@
     "retrieval_unit": "source-specific leaf",
     "generation_unit": "stored verbatim parent",
     "context_prefix_enabled": true,
-    "leaf_chunk_size": 500,
-    "leaf_overlap": 50,
+    "leaf_chunk_size": 800,
+    "leaf_overlap": 80,
     "safety": "new isolated index; no alias promotion"
   }
 }

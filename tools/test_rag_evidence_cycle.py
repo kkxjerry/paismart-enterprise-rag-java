@@ -10,6 +10,7 @@ from tools.adaptive_rag.evidence_spans import pack_evidence
 from tools.adaptive_rag.requirements import Requirement, RequirementPlan
 from tools.qwen_plus_rag_pipeline import ApiResult
 from tools.rag_evidence_experiment import anchor_checks, choose, summarize
+from tools.rag_packing_loop10 import exact_recall, exact_values
 
 
 def context(citation, text, rank=1, doc="primary"):
@@ -138,6 +139,26 @@ class ExperimentRegistryTest(unittest.TestCase):
     def test_ledger_probe_does_not_count_identifier_prefixes(self):
         self.assertEqual(anchor_checks("qst_0174", "service_a_version service_b_version")["field_count"], 2)
         self.assertIsNone(anchor_checks("other", "service_a"))
+
+    def test_exact_value_scorer_includes_names_ids_titles_and_paths(self):
+        facts = [
+            "The mechanism is named TrafficEscrow and uses the traffic_escrow service.",
+            'The page is titled "Operational Flows and Policy Gallery".',
+            "Use /confluence/templates/access-request-template.",
+        ]
+        values = exact_values(facts)
+        self.assertIn("trafficescrow", values)
+        self.assertIn("traffic_escrow", values)
+        self.assertIn("operational flows and policy gallery", values)
+        self.assertIn("/confluence/templates/access-request-template", values)
+        self.assertEqual(
+            exact_recall(
+                "TrafficEscrow uses traffic_escrow. Operational Flows and Policy Gallery. "
+                "/confluence/templates/access-request-template",
+                facts,
+            ),
+            1.0,
+        )
 
 
 if __name__ == "__main__":

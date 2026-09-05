@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import statistics
@@ -88,6 +89,16 @@ def summarize(records: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[s
         def avg(name: str, group: list[dict[str, Any]] = evaluable):
             data = [r[name] for r in group if isinstance(r.get(name), (int, float))]
             return statistics.fmean(data) if data else None
+        def count_metric(name: str, group: list[dict[str, Any]] = evaluable) -> int:
+            return sum(isinstance(r.get(name), (int, float)) for r in group)
+        latencies = sorted(
+            float(r["latency_ms"]) for r in valid if isinstance(r.get("latency_ms"), (int, float))
+        )
+        def percentile(p: float) -> float | None:
+            if not latencies:
+                return None
+            index = min(len(latencies) - 1, max(0, math.ceil(p * len(latencies)) - 1))
+            return latencies[index]
         aggregates[arm] = {
             "rows": len(values), "errors": len(values) - len(valid), "evaluable": len(evaluable),
             "prompt_lexical_recall": avg("prompt_lexical_recall"),
@@ -108,12 +119,26 @@ def summarize(records: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[s
             "claim_citation_support_precision": None,
             "claim_citation_support_recall": None,
             "unsupported_claim_rate": None,
+            "metric_denominators": {
+                "prompt_exact_value_rows": count_metric("prompt_exact_value_recall"),
+                "prompt_list_rows": count_metric("prompt_list_item_recall"),
+                "prompt_condition_rows": count_metric("prompt_condition_exception_recall"),
+                "answer_exact_value_rows": count_metric("answer_exact_value_accuracy"),
+                "answer_list_rows": count_metric("answer_list_completeness"),
+                "answer_condition_rows": count_metric("answer_condition_accuracy"),
+                "answer_negation_rows": count_metric("answer_negation_accuracy"),
+                "abstention_rows": count_metric("abstention_accuracy", valid),
+            },
             "mean_rendered_chars": avg("rendered_chars", valid),
             "mean_latency_ms": avg("latency_ms", valid),
+            "p50_latency_ms": statistics.median(latencies) if latencies else None,
+            "p95_latency_ms": percentile(0.95),
+            "model_calls": len(latencies),
             "abstentions": sum(r.get("generation", {}).get("answerable") is False for r in valid),
             "usage": {key: sum(int(r.get("usage", {}).get(key, 0)) for r in values)
                       for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")},
             "attempts": sum(r.get("attempts", 0) for r in values),
+            "retry_tokens": 0 if metadata.get("retries") == 0 else None,
         }
     paired = {}
     for record in records:
@@ -141,6 +166,7 @@ def summarize(records: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[s
             "proxy_ties": sum(abs(r["delta"]) <= 1e-8 for r in deltas),
             "largest_proxy_regressions": sorted(deltas, key=lambda r: r["delta"])[:10],
             "largest_proxy_gains": sorted(deltas, key=lambda r: -r["delta"])[:10],
+            "failed_qids": sorted({str(r.get("qid")) for r in records if r.get("error")}),
             "known_case_checks": [{k: r.get(k) for k in ("qid", "strategy", "prompt_checks", "answer_checks", "error")}
                                   for r in records if r.get("prompt_checks") is not None]}
 

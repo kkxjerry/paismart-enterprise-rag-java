@@ -33,9 +33,14 @@ from tools.adaptive_rag.requirements import deterministic_requirement_plan
 from tools.qwen_plus_rag_pipeline import token_recall
 
 VALUE_RE = re.compile(
-    r"(?i)(?:\b\d{1,2}:\d{2}(?:\s*(?:utc|gmt|[ap]m))?\b|"
-    r"\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*(?:ms|seconds?|minutes?|hours?|days?|gb|mb|kb|mib|gib)\b|"
-    r"\bv?\d+(?:\.\d+){1,3}\b|\btens? of minutes\b)"
+    r"(?:\b\d{1,2}:\d{2}(?:\s*(?i:utc|gmt|[ap]m))?\b|"
+    r"\b\d+(?:\.\d+)?\s*%|"
+    r"\b\d+(?:\.\d+)?\s*(?i:ms|seconds?|minutes?|hours?|days?|gb|mb|kb|mib|gib)\b|"
+    r"\b[vV]?\d+(?:\.\d+){1,3}\b|(?i:\btens? of minutes\b)|"
+    r"\b[A-Za-z][A-Za-z0-9]+(?:_[A-Za-z0-9]+)+\b|"
+    r"\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+\b|"
+    r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+|"
+    r"\"[^\"\n]{3,100}\")"
 )
 CONDITION_RE = re.compile(
     r"(?i)\b(?:if|when|unless|only if|provided|assuming|depends? on|except|otherwise|"
@@ -66,7 +71,7 @@ def exact_values(facts: Iterable[str]) -> list[str]:
     output: list[str] = []
     for fact in facts:
         for value in VALUE_RE.findall(str(fact)):
-            normalized = re.sub(r"\s+", " ", value.casefold()).strip()
+            normalized = re.sub(r"\s+", " ", value.casefold()).strip().strip('"').rstrip(".,;:!?")
             if normalized not in output:
                 output.append(normalized)
     return output

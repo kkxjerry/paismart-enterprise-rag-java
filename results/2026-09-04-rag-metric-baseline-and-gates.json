@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "scope": "RAG health baseline, optimization metrics and proposed promotion gates",
+  "baselines": {
+    "retrieval": {
+      "hit_at_1": 0.8915,
+      "hit_at_5": 0.9596,
+      "hit_at_10": 0.9809,
+      "mrr_at_10": 0.9217,
+      "misses": 9,
+      "evaluated_questions": 470,
+      "acl_source_violations": 0,
+      "global_rerank_hit_to_miss": {"single_chunk": 12, "neighbor": 8, "parent": 7},
+      "parent_rerank_extra_latency_seconds_per_question": 2.69
+    },
+    "evidence_prompt_historical_same_python_scorer": {
+      "evaluated_questions": 480,
+      "full_evidence_fact_token_recall": 0.770110,
+      "after_per_document_cap": 0.748132,
+      "after_context_count_cap": 0.705134,
+      "actual_prompt_fact_token_recall": 0.658470,
+      "pre_verifier_answer_fact_token_recall": 0.534218,
+      "post_verifier_answer_fact_token_recall": 0.531896
+    },
+    "java_evidence_legacy_metric": {"fact_recall": 0.830671, "evaluated_questions": 470},
+    "requirement_mapping": {"fast_rows_without_evidence_mapping": 312, "fast_fact_evaluable_rows_without_evidence_mapping": 304, "total_rows": 500, "fact_evaluable_rows": 480},
+    "citation": {"id_validity": 1.0, "semantic_support_measured": false},
+    "secondary_retrieval": {"attempted": 0, "added_contexts": 0, "questions": 500},
+    "source_aware": {
+      "all_sources": {"hit_at_1_before": 0.8915, "hit_at_1_after": 0.8723, "hit_at_10_before": 0.9809, "hit_at_10_after": 0.9787, "evidence_recall_before": 0.8282, "evidence_recall_after": 0.8150},
+      "slack_linear_only": {"hit_at_1_delta_pp": 0.21, "mrr_at_10_delta": 0.0016, "hit_at_10_delta_pp": 0.0, "evidence_recall_delta_pp": 0.25}
+    },
+    "p1_evidence_builder": {"context_fact_recall_before": 0.7199, "context_fact_recall_after": 0.7324, "context_fact_coverage_before": 0.7970, "context_fact_coverage_after": 0.8115, "prompt_char_increase_ratio": 0.39, "fixed_small_model_answer_improved": false},
+    "qwen_plus_evidence_enhancement_completed_experiment": {"answer_fact_recall_before": 0.5009, "answer_fact_recall_after": 0.5412, "answer_fact_coverage_before": 0.4242, "answer_fact_coverage_after": 0.4773, "gold_answer_f1_before": 0.3993, "gold_answer_f1_after": 0.4354, "gold_doc_citation_before": 0.8936, "gold_doc_citation_after": 0.9340, "citation_id_precision": 1.0, "extra_latency_seconds": 2.14, "fast_tokens_approx": 2250000, "quality_tokens_approx": 7290000, "quality_to_fast_token_ratio_approx": 3.24},
+    "flash_fast_vs_adaptive": {"answer_fact_recall_fast_approx": 0.529, "answer_fact_recall_adaptive_approx": 0.535, "answer_fact_coverage_fast_approx": 0.453, "answer_fact_coverage_adaptive_approx": 0.445, "context_fact_recall_fast_approx": 0.638, "context_fact_recall_adaptive_approx": 0.659, "gold_answer_f1_fast_approx": 0.394, "gold_answer_f1_adaptive_approx": 0.404, "adaptive_to_fast_token_ratio_approx": 2.6},
+    "query_spans_fixed_fast_ablation": {"questions": 500, "fact_evaluable_questions": 480, "legacy_prompt_lexical_recall": 0.634940, "v1_prompt_lexical_recall": 0.650052, "v2_prompt_lexical_recall": 0.659642, "v2_vs_legacy_delta_pp": 2.4702, "wins": 218, "regressions": 111, "ties": 151, "regression_rate": 0.23125, "legacy_mean_rendered_chars": 9997.594, "v2_mean_rendered_chars": 9652.388, "mean_rendered_chars_delta": -345.206, "mean_rendered_chars_delta_ratio": -0.03453, "qst_0026_key_evidence_recovered": true, "qst_0174_list_items_before": 2, "qst_0174_list_items_after": 11},
+    "engineering": {"python_tests_passed": 103, "python_tests_failed": 0, "java_a40_tests_passed": 88, "java_a40_tests_failed": 0, "java_build_success": true},
+    "new_live_generation": {"planned_questions": 20, "completed_questions": 0, "model_calls": 0, "answer_quality_claim_available": false},
+    "new_adaptive_plus_acceptance": {"full500_completed": false, "judge100_completed": false}
+  },
+  "optimization_priority": ["P0 evidence_to_prompt", "P1 prompt_to_answer", "P2 evaluation", "P3 citation_semantic_support", "P4 secondary_retrieval", "P5 verifier"],
+  "proposed_promotion_gates": {
+    "retrieval_regression_guard": {"hit_at_1_max_drop_pp": 0.5, "hit_at_10_min": 0.98, "mrr_at_10_max_drop": 0.005, "acl_source_violations_max": 0},
+    "packing": {"requirement_evidence_coverage_relative_gain_pp_min": 5.0, "typed_metric_max_regression_pp_per_type": 1.0, "paired_regression_rate_max": 0.15},
+    "generation": {"typed_answer_correctness_relative_gain_pp_min": 3.0, "multi_requirement_completion_relative_gain_pp_min": 5.0, "condition_negation_no_regression": true},
+    "evaluation": {"manual_calibration_questions_min": 100, "manual_calibration_questions_target": 200, "typed_scorer_human_agreement_min": 0.95},
+    "citation": {"id_validity_min": 1.0, "claim_support_precision_min": 0.95, "claim_support_recall_min": 0.90, "unsupported_claim_rate_max": 0.05},
+    "secondary_retrieval": {"missing_requirement_trigger_recall_min": 0.80, "false_trigger_rate_max": 0.10, "requirement_evidence_recovery_min": 0.50},
+    "verifier": {"supported_false_deletion_rate_max": 0.02, "typed_correctness_may_decline": false, "requirement_completion_may_decline": false},
+    "default_cost_latency": {"total_tokens_to_fast_max_ratio": 1.5, "mean_latency_extra_seconds_max": 1.0}
+  },
+  "required_per_run_metrics": [
+    "commit", "dirty_state", "input_sha256", "output_sha256", "model", "prompt_hash", "sample_counts", "errors",
+    "hit_at_1", "hit_at_5", "hit_at_10", "mrr_at_10", "retrieval_misses", "acl_source_violations",
+    "requirement_evidence_coverage", "prompt_exact_value_recall", "prompt_list_item_recall", "prompt_condition_exception_recall", "prompt_lexical_recall", "prompt_chars", "prompt_tokens", "packing_regressions",
+    "answer_exact_value_accuracy", "requirement_completion", "answer_list_completeness", "answer_condition_accuracy", "answer_negation_accuracy", "answer_fact_recall", "answer_fact_coverage", "gold_answer_f1", "abstention_accuracy",
+    "citation_id_validity", "claim_citation_support_precision", "claim_citation_support_recall", "unsupported_claim_rate",
+    "secondary_eligible", "secondary_attempted", "secondary_false_triggers", "secondary_recovered_requirements",
+    "verifier_pre_typed_correctness", "verifier_post_typed_correctness", "verifier_false_deletion_rate",
+    "model_calls", "prompt_tokens_total", "completion_tokens_total", "total_tokens", "cached_tokens", "retry_tokens", "mean_latency_ms", "p50_latency_ms", "p95_latency_ms",
+    "paired_wins", "paired_regressions", "paired_ties", "promotion_decision", "failed_qids"
+  ]
+}

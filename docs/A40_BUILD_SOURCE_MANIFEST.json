@@ -1,0 +1,23 @@
+{
+  "purpose": "A40 native JDK 17 verification of generation consistency test repair",
+  "source_branch": "develop",
+  "source_base_commit": "209fc0046caeb706c8dea9b29f3844d15b1a8bd5",
+  "source_has_uncommitted_test_fix": true,
+  "production_sources_modified": false,
+  "pom_modified": false,
+  "changed_java_file": "src/test/java/com/yizhaoqi/smartpai/benchmark/EnterpriseRagGenerationConsistencyTest.java",
+  "test_file_sha256": "7997f94b79fadc871e83e0fa296989da93b0407d31465eab807e944f31554fcc",
+  "test_git_diff_sha256": "7fdc86ed12c70e0c75aa39642d5f9f2c6b74dd54c808b5eccee5f6f5fe7f8687",
+  "pom_sha256": "d36a99ed69bcee90934cb8ca07f544b97d394b27b58933a58286f4d47a1a03ba",
+  "synchronizer_sha256": "1698f4b33589209174163b03aa36ba83d040f0a0e95f4a1dc0841f0c75dedf4b",
+  "source_file_count_including_pom": 35,
+  "config_fixture_count": 6,
+  "config_tree_sha256": "79cdc2924d5eb08c02668cc17bd935820adba3d620064fe4d94a3ee875429865",
+  "config_hash_recipe": "find config -type f -exec sha256sum {} \\; | LC_ALL=C sort | sha256sum",
+  "source_tree_sha256": "5543bcfe9395fd39fc18cf1d34a2850ea3bfc34e783f50d9a4bb5b5c46d6cc96",
+  "tree_hash_recipe": "{ sha256sum pom.xml; find src -type f -exec sha256sum {} \\;; } | LC_ALL=C sort | sha256sum",
+  "a40_destination": "/srv/paismart-develop-experiment/repro-adaptive-v1/builds/209fc00-generation-test-fix",
+  "snapshot_is_git_checkout": false,
+  "existing_runtime_files_must_remain_unchanged": true,
+  "secrets_included": false
+}

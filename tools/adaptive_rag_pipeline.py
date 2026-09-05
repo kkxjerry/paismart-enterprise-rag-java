@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verifier-model")
     parser.add_argument("--force-mode", choices=("fast", "quality", "deep"))
     parser.add_argument("--map-fast-mode", action="store_true")
+    parser.add_argument("--evidence-strategy", choices=("legacy", "query-spans"), default="legacy")
     parser.add_argument("--requirements-max-input-chars", type=int, default=48_000)
     parser.add_argument("--requirements-max-count", type=int, default=12)
     parser.add_argument("--requirements-max-selected", type=int, default=16)
@@ -113,12 +114,13 @@ def profile_models(args: argparse.Namespace) -> tuple[str, str, str]:
 
 def run_signature(args: argparse.Namespace, models: tuple[str, str, str]) -> str:
     payload = {
-        "schema_version": 3,
+        "schema_version": 4,
         "contexts_sha256": sha256_file(args.contexts),
         "details_sha256": sha256_file(args.details) if args.details else None,
         "qid_file_sha256": sha256_file(args.qid_file) if args.qid_file else None,
         "profile": args.profile,
         "models": models,
+        "evidence_strategy": getattr(args, "evidence_strategy", "legacy"),
         "force_mode": args.force_mode,
         "stratified": args.stratified,
         "map_fast_mode": args.map_fast_mode,
@@ -307,6 +309,7 @@ def summarize(
         "details": str(args.details) if args.details else None,
         "output": str(args.output),
         "run_signature": signature,
+        "evidence_strategy": getattr(args, "evidence_strategy", "legacy"),
         "profile": args.profile,
         "models": {"mapper": models[0], "generator": models[1], "verifier": models[2]},
         "questions_total": len(rows),
@@ -441,6 +444,7 @@ def main() -> int:
         secondary_retrieval=secondary,
         config=AdaptiveRagConfig(
             map_fast_mode=args.map_fast_mode,
+            evidence_strategy=args.evidence_strategy,
             requirements_max_chars=args.requirements_max_input_chars,
             requirements_max_count=args.requirements_max_count,
             requirements_max_selected=args.requirements_max_selected,

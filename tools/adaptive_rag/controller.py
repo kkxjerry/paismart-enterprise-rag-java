@@ -73,6 +73,7 @@ class AdaptiveRagConfig:
     verifier_max_tokens: int = 1_024
     temperature: float = 0.0
     secondary_max_queries: int = 4
+    evidence_strategy: str = "legacy"
 
 
 class AdaptiveRagController:
@@ -91,9 +92,9 @@ class AdaptiveRagController:
         self.generator_client = generator_client
         self.verifier = ClaimCitationVerifier(verifier_client)
         self.router = router or AdaptiveRouter()
-        self.budget = budget or DynamicEvidenceBudget()
-        self.secondary_retrieval = secondary_retrieval
         self.config = config or AdaptiveRagConfig()
+        self.budget = budget or DynamicEvidenceBudget(strategy=self.config.evidence_strategy)
+        self.secondary_retrieval = secondary_retrieval
 
     def process(
         self,
@@ -151,9 +152,28 @@ class AdaptiveRagController:
                     )
 
         budget_decision = self.budget.decide(route, plan)
-        budgeted = self.budget.build(working_contexts, plan=plan, decision=budget_decision)
+        try:
+            budgeted = self.budget.build(
+                working_contexts, plan=plan, decision=budget_decision,
+                question=str(row.get("question") or ""),
+            )
+        except Exception as exc:
+            return self._error(row, route, "budget", exc)
+        budget_error = None
         if not budgeted.contexts:
-            return self._error(row, route, "budget", PipelineError("dynamic budget produced no contexts"))
+            budget_error = "dynamic budget produced no contexts"
+        elif budgeted.selection_strategy == "query-spans" and budgeted.selected_citations_missing:
+            # A mapped/conflicting source that cannot fit is a budget failure,
+            # not evidence that the user question is unanswerable. Do not generate
+            # a one-sided answer or advertise complete requirement support.
+            budget_error = "required evidence does not fit: " + ", ".join(budgeted.selected_citations_missing)
+        if budget_error:
+            result = self._error(row, route, "budget", PipelineError(budget_error))
+            result["budget"] = {**budget_decision.to_dict(), **budgeted.to_dict()}
+            result["selected_contexts"] = list(budgeted.contexts)
+            result["requirements"] = plan.to_dict()
+            result["usage"] = dict(plan.usage)
+            return result
 
         generation_api: ApiResult | None = None
         try:

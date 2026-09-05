@@ -34,6 +34,8 @@ class BudgetedEvidence:
     selected_citations_present: tuple[str, ...]
     selected_citations_missing: tuple[str, ...]
     selected_citations_truncated: tuple[str, ...] = tuple()
+    selection_strategy: str = "legacy"
+    selection_trace: tuple[dict[str, Any], ...] = tuple()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,11 +46,19 @@ class BudgetedEvidence:
             "selected_citations_present": list(self.selected_citations_present),
             "selected_citations_missing": list(self.selected_citations_missing),
             "selected_citations_truncated": list(self.selected_citations_truncated),
+            "selection_strategy": self.selection_strategy,
+            "selection_trace": list(self.selection_trace),
+            "per_document_limit_applied": self.selection_strategy == "legacy",
         }
 
 
 class DynamicEvidenceBudget:
     """Allocate evidence by route/risk instead of one global prompt size."""
+
+    def __init__(self, strategy: str = "legacy") -> None:
+        if strategy not in {"legacy", "query-spans"}:
+            raise ValueError(f"unsupported evidence strategy: {strategy}")
+        self.strategy = strategy
 
     def decide(self, route: RouterDecision, plan: RequirementPlan) -> BudgetDecision:
         reasons: list[str] = [f"router_mode={route.mode}"]
@@ -104,7 +114,10 @@ class DynamicEvidenceBudget:
         *,
         plan: RequirementPlan,
         decision: BudgetDecision,
+        question: str = "",
     ) -> BudgetedEvidence:
+        if self.strategy == "query-spans":
+            return self._build_query_spans(contexts, plan=plan, decision=decision, question=question)
         ordered = prioritize_contexts(
             contexts,
             selected_citations=list(plan.selected_citations),
@@ -154,6 +167,46 @@ class DynamicEvidenceBudget:
             selected_citations_present=tuple(sorted(required & present, key=citation_sort_key)),
             selected_citations_missing=tuple(sorted(missing, key=citation_sort_key)),
             selected_citations_truncated=tuple(sorted(truncated, key=citation_sort_key)),
+        )
+
+    @staticmethod
+    def _build_query_spans(
+        contexts: list[dict[str, Any]],
+        *,
+        plan: RequirementPlan,
+        decision: BudgetDecision,
+        question: str,
+    ) -> BudgetedEvidence:
+        from .evidence_spans import pack_evidence
+
+        required = tuple(dict.fromkeys(plan.conflict_citations + plan.selected_citations))
+        requirements = tuple((item.id, item.requirement) for item in plan.requirements)
+
+        def pack(limit: int):
+            return pack_evidence(
+                contexts, question=question, requirements=requirements,
+                required_citations=required, max_chars=limit,
+                max_contexts=decision.max_contexts,
+            )
+
+        budget = decision.initial_chars
+        packed = pack(budget)
+        present = {str(item.get("citation_id") or "") for item in packed.contexts}
+        missing = set(required) - present
+        expand = bool(missing or plan.missing_count) and decision.maximum_chars > budget
+        if expand:
+            budget = decision.maximum_chars
+            packed = pack(budget)
+            present = {str(item.get("citation_id") or "") for item in packed.contexts}
+            missing = set(required) - present
+        return BudgetedEvidence(
+            rendered=packed.rendered, contexts=packed.contexts,
+            rendered_chars=len(packed.rendered), budget_chars=budget,
+            expanded_to_maximum=expand,
+            selected_citations_present=tuple(sorted(set(required) & present, key=citation_sort_key)),
+            selected_citations_missing=tuple(sorted(missing, key=citation_sort_key)),
+            selected_citations_truncated=(), selection_strategy="query-spans",
+            selection_trace=packed.trace,
         )
 
 

@@ -1,468 +1,327 @@
-"""E2 canonical-source, requirement-level generation contracts.
+"""Requirement- and canonical-document-aware generation (E2).
 
-The generator must bind each requirement to one evidence document before writing
-its answer. The validator rejects citations from another document and constructs
-the final answer from validated requirement outputs. This prevents a fluent top-
-level answer from bypassing source decisions.
+The generator receives explicit document roles instead of a flat S* list. For
+single-artifact questions, only the selected canonical document may support the
+answer. Supplemental documents are either omitted or clearly isolated. This is
+an opt-in experiment and does not alter the legacy generation path.
 """
 from __future__ import annotations
 
 import re
-from collections import defaultdict
-from typing import Any, Sequence
+from dataclasses import asdict, dataclass
+from typing import Any, Protocol, Sequence
 
-from tools.qwen_plus_rag_pipeline import PipelineError, UNTRUSTED_EVIDENCE_RULE, validate_generation
+from tools.qwen_plus_rag_pipeline import ApiResult, PipelineError, UNTRUSTED_EVIDENCE_RULE
 
-from .hierarchical import build_global_hierarchy, is_global_question, is_single_artifact_question
-from .requirements import RequirementPlan
+from .hierarchical_evidence import HierarchicalEvidence, requires_canonical_document
 
-_CANONICAL_PROMPT = UNTRUSTED_EVIDENCE_RULE + "\n\n" + """You are the source-binding answer stage of an enterprise RAG system.
-Use only the authorized evidence cards below. First bind every requirement to one canonical document, then answer from that document. Never merge fields, names, actions, paths, versions, or policies from merely similar documents.
+_REQUIREMENT_SPLIT = re.compile(
+    r"\s*(?:;|\band\s+(?=(?:what|which|when|where|who|how|whether)\b))\s*",
+    re.I,
+)
+_COMPARATIVE = re.compile(r"\b(?:compare|versus|vs\.?|difference|conflict|disagree|across)\b|比较|冲突|差异", re.I)
+_CITATION = re.compile(r"S[1-9][0-9]*\Z")
+
+CANONICAL_GENERATION_SYSTEM_PROMPT = UNTRUSTED_EVIDENCE_RULE + "\n\n" + """You answer enterprise questions from authorized evidence grouped by requirement and document role.
 
 Rules:
-- Every supported requirement must name one canonical_doc_id and cite only S* evidence from that document.
-- If the question explicitly compares sources or the requirement is conflicting, use multiple source records instead of silently synthesizing them.
-- A similarly named page, card, service, policy, or runbook is not interchangeable with the requested artifact.
+- Answer every requirement independently before composing the final answer.
+- For a single-artifact requirement, facts and identity MUST come from its CANONICAL document. Do not merge names, actions, fields, versions, or paths from similar supplemental artifacts.
+- Supplemental evidence may add context only when the requirement explicitly allows it. It never overrides canonical identity.
 - Preserve exact identifiers, numbers, dates, units, list items, conditions, exceptions, and negations.
-- Each requirement answer must contain inline citations and be independently usable.
-- Missing requirements must use answer="INSUFFICIENT_EVIDENCE", canonical_doc_id="", citations=[] and missing=true.
-- Do not put unsupported facts in the top-level answer. The final answer will be reconstructed from requirement answers.
+- A requirement marked missing must be reported as missing, not guessed.
+- Every supported requirement answer must cite the exact supplied S* evidence used.
 
 Return exactly one JSON object:
 {
-  "answerable": true,
   "requirements": [
     {
       "id": "R1",
-      "canonical_doc_id": "document-id",
-      "answer": "requirement answer [S1]",
+      "status": "supported" | "missing" | "conflicting",
+      "answer": "short complete answer",
       "citations": ["S1"],
-      "missing": false
-    }
-  ],
-  "answer": "optional draft; validator reconstructs it",
-  "citations": ["S1"],
-  "covered_requirements": ["R1"],
-  "missing_requirements": []
-}
-Return JSON only."""
-
-_SOURCE_BINDING_PROMPT = UNTRUSTED_EVIDENCE_RULE + "\n\n" + """You are the canonical-source binding stage of an enterprise RAG system.
-Do not answer the user question. Compare the supplied document cards and bind each requirement to the one document that directly matches all requested artifact identity, scope, values, and qualifiers.
-
-Rules:
-- Retrieval rank is only a candidate prior, not proof.
-- Similar pages, cards, policies, dashboards, or services are distractors unless their own text directly matches the requirement.
-- Prefer explicit identity language and exact requested actions/fields/paths over broad topical overlap.
-- One requirement gets one canonical_doc_id. A conflicting requirement may set conflicting=true and name multiple documents.
-- evidence_citations must all belong to the bound document and must show why it is the canonical source.
-- If no document directly supports the requirement, set missing=true with no document or citations.
-
-Return exactly one JSON object:
-{
-  "bindings": [
-    {
-      "id": "R1",
-      "canonical_doc_id": "document-id",
-      "evidence_citations": ["S1"],
-      "missing": false,
-      "conflicting": false
+      "source_doc_ids": ["doc-id"]
     }
   ]
 }
 Return JSON only."""
 
-_GLOBAL_PROMPT = UNTRUSTED_EVIDENCE_RULE + "\n\n" + """You are the global synthesis stage of an enterprise RAG system.
-Use only the extractive document hierarchy. Each bullet is copied from source evidence and carries its S* citation. Synthesize cross-document themes only when at least two supplied documents support them. Preserve disagreements and scope qualifiers. Do not invent a global trend from one local example.
 
-Return exactly one JSON object:
-{
-  "answerable": true,
-  "answer": "global answer with inline S* citations",
-  "citations": ["S1", "S2"],
-  "covered_requirements": ["R1"],
-  "missing_requirements": [],
-  "documents_used": ["document-id"]
-}
-Return JSON only."""
+class JsonClient(Protocol):
+    model: str
+
+    def complete_json(self, **kwargs: Any) -> ApiResult:
+        ...
 
 
-def _context_block(context: dict[str, Any]) -> str:
-    citation = str(context.get("citation_id") or "")
-    values = [
-        f"[{citation}]",
-        f"title={context.get('title') or ''}",
-        f"source_type={context.get('source_type') or 'unknown'}",
-        f"doc_id={context.get('doc_id') or ''}",
-    ]
-    section = str(context.get("section_path") or "").strip()
-    if section:
-        values.append(f"section={section}")
-    return " ".join(values) + "\n" + str(context.get("text") or "")
+@dataclass(frozen=True)
+class GenerationRequirement:
+    id: str
+    text: str
+    canonical_doc_id: str
+    canonical_title: str
+    allowed_doc_ids: tuple[str, ...]
+    canonical_only: bool
 
 
-def group_contexts_by_document(
-    contexts: Sequence[dict[str, Any]],
-    *,
+@dataclass(frozen=True)
+class CanonicalGenerationPlan:
+    question: str
+    requirements: tuple[GenerationRequirement, ...]
+    citation_doc_map: dict[str, str]
+    canonical_doc_ids: tuple[str, ...]
+    supplemental_doc_ids: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "question": self.question,
+            "requirements": [asdict(value) for value in self.requirements],
+            "citation_doc_map": dict(self.citation_doc_map),
+            "canonical_doc_ids": list(self.canonical_doc_ids),
+            "supplemental_doc_ids": list(self.supplemental_doc_ids),
+        }
+
+
+@dataclass(frozen=True)
+class CanonicalGenerationResult:
+    answerable: bool
+    answer: str
+    citations: tuple[str, ...]
+    requirement_results: tuple[dict[str, Any], ...]
+    canonical_source_accuracy_proxy: float
+    source_contamination_count: int
+    source_contamination_rate: float
+    plan: CanonicalGenerationPlan
+    api: ApiResult
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "answerable": self.answerable,
+            "answer": self.answer,
+            "citations": list(self.citations),
+            "requirements": list(self.requirement_results),
+            "canonical_source_accuracy_proxy": self.canonical_source_accuracy_proxy,
+            "source_contamination_count": self.source_contamination_count,
+            "source_contamination_rate": self.source_contamination_rate,
+            "plan": self.plan.to_dict(),
+            "model": self.api.returned_model or self.api.value.get("model") or "unknown",
+            "latency_ms": self.api.latency_ms,
+            "usage": dict(self.api.usage),
+            "request_id": self.api.request_id,
+            "attempts": self.api.attempts,
+        }
+
+
+def decompose_question(question: str, *, maximum: int = 6) -> tuple[str, ...]:
+    """Conservative deterministic decomposition; never invents benchmark labels."""
+    normalized = re.sub(r"\s+", " ", question).strip()
+    if not normalized:
+        return ("Answer the user question",)
+    parts = [value.strip(" ,;?") for value in _REQUIREMENT_SPLIT.split(normalized) if value.strip(" ,;?")]
+    if len(parts) <= 1 or len(parts) > maximum:
+        return (normalized,)
+    # A fragment must remain independently intelligible; otherwise keep one requirement.
+    question_words = ("what", "which", "when", "where", "who", "how", "whether")
+    if not all(index == 0 or part.casefold().startswith(question_words) for index, part in enumerate(parts)):
+        return (normalized,)
+    return tuple(parts)
+
+
+def build_canonical_plan(
     question: str,
-) -> tuple[str, dict[str, str], dict[str, list[str]]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for context in contexts:
-        doc_id = str(context.get("doc_id") or context.get("citation_id") or "")
-        if doc_id:
-            grouped[doc_id].append(dict(context))
-    ordered = sorted(
-        grouped.items(),
-        key=lambda item: (
-            min(int(value.get("document_rank") or 10**9) for value in item[1]),
-            -max(float(value.get("query_coverage") or 0.0) for value in item[1]),
-            item[0],
-        ),
-    )
-    citation_to_doc: dict[str, str] = {}
-    doc_to_citations: dict[str, list[str]] = {}
-    cards = []
-    for index, (doc_id, values) in enumerate(ordered, start=1):
-        title = str(values[0].get("title") or "")
-        source = str(values[0].get("source_type") or "unknown")
-        citations = [str(value.get("citation_id") or "") for value in values]
-        doc_to_citations[doc_id] = citations
-        for citation in citations:
-            citation_to_doc[citation] = doc_id
-        cards.append(
-            f"Document D{index}: doc_id={doc_id} title={title} source_type={source}\n"
-            + "\n\n".join(_context_block(value) for value in values)
-        )
-    return "\n\n===== NEXT DOCUMENT =====\n\n".join(cards), citation_to_doc, doc_to_citations
-
-
-def build_source_binding_messages(
+    evidence: HierarchicalEvidence,
     *,
-    question: str,
-    plan: RequirementPlan,
-    contexts: Sequence[dict[str, Any]],
-) -> tuple[list[dict[str, str]], dict[str, str], bool]:
-    rendered, citation_to_doc, _ = group_contexts_by_document(contexts, question=question)
-    requirements = "\n".join(
-        f"{value.id}. {value.requirement} | planner_status={value.status}"
-        for value in plan.requirements
-    )
-    single_source = is_single_artifact_question(question) and not any(
-        value.status == "conflicting" for value in plan.requirements
-    )
-    mode = (
-        "All supported requirements describe one artifact; bind them to the same document."
-        if single_source
-        else "Bind each requirement independently; only explicit conflicts may use multiple documents."
-    )
-    user = (
-        f"Question:\n{question}\n\n"
-        f"Binding mode:\n{mode}\n\n"
-        f"Requirements:\n{requirements}\n\n"
-        f"Candidate document cards:\n{rendered}"
-    )
-    return [
-        {"role": "system", "content": _SOURCE_BINDING_PROMPT},
-        {"role": "user", "content": user},
-    ], citation_to_doc, single_source
-
-
-def validate_source_bindings(
-    payload: dict[str, Any],
-    *,
-    citation_to_doc: dict[str, str],
-    requirement_ids: set[str],
-    single_source: bool,
-) -> dict[str, Any]:
-    raw = payload.get("bindings")
-    if not isinstance(raw, list) or len(raw) != len(requirement_ids):
-        raise PipelineError("source binding must return one row per requirement")
-    observed: set[str] = set()
-    bindings = []
-    supported_docs: list[str] = []
-    for value in raw:
-        if not isinstance(value, dict):
-            raise PipelineError("source binding row must be an object")
-        requirement_id = str(value.get("id") or "").strip().upper()
-        if requirement_id not in requirement_ids or requirement_id in observed:
-            raise PipelineError(f"invalid or duplicate binding id: {requirement_id!r}")
-        observed.add(requirement_id)
-        missing = value.get("missing")
-        conflicting = value.get("conflicting")
-        if not isinstance(missing, bool) or not isinstance(conflicting, bool):
-            raise PipelineError("binding missing/conflicting fields must be boolean")
-        doc_id = str(value.get("canonical_doc_id") or "").strip()
-        citations_raw = value.get("evidence_citations")
-        if not isinstance(citations_raw, list):
-            raise PipelineError("binding evidence_citations must be an array")
-        citations: list[str] = []
-        for citation_value in citations_raw:
-            citation = str(citation_value).strip()
-            if citation not in citation_to_doc:
-                raise PipelineError(f"unknown binding citation: {citation!r}")
-            if citation not in citations:
-                citations.append(citation)
-        if missing:
-            if doc_id or citations or conflicting:
-                raise PipelineError("missing binding must not name documents or citations")
-        else:
-            if not doc_id or not citations:
-                raise PipelineError("supported binding requires a document and evidence")
-            wrong = [citation for citation in citations if citation_to_doc[citation] != doc_id]
-            if wrong:
-                raise PipelineError(f"binding citations do not belong to {doc_id}: {wrong}")
-            supported_docs.append(doc_id)
-        bindings.append({
-            "id": requirement_id,
-            "canonical_doc_id": doc_id,
-            "evidence_citations": citations,
-            "missing": missing,
-            "conflicting": conflicting,
-        })
-    if observed != requirement_ids:
-        raise PipelineError("source binding omitted requirements")
-    if single_source and len(set(supported_docs)) > 1:
-        raise PipelineError("single-artifact source binding selected multiple documents")
-    return {
-        "bindings": sorted(bindings, key=lambda value: value["id"]),
-        "canonical_doc_ids": list(dict.fromkeys(supported_docs)),
-        "missing_requirements": [value["id"] for value in bindings if value["missing"]],
-        "single_source_enforced": single_source,
+    requirements: Sequence[str] = (),
+) -> CanonicalGenerationPlan:
+    contexts = list(evidence.contexts)
+    citation_doc_map = {
+        str(context.get("citation_id") or ""): str(context.get("doc_id") or "")
+        for context in contexts
+        if _CITATION.fullmatch(str(context.get("citation_id") or ""))
     }
+    if not citation_doc_map:
+        raise PipelineError("canonical generation requires at least one valid evidence citation")
+    ranked_docs = list(evidence.canonical_documents)
+    if not ranked_docs:
+        raise PipelineError("canonical generation has no ranked documents")
+    requirement_texts = tuple(requirements) or decompose_question(question)
+    comparative = bool(_COMPARATIVE.search(question)) or evidence.route_mode == "global"
+    single_artifact = requires_canonical_document(question) and not comparative
+    canonical_doc = str(ranked_docs[0]["doc_id"])
+    canonical_title = str(ranked_docs[0].get("title") or "")
+    all_docs = tuple(dict.fromkeys(citation_doc_map.values()))
+    allowed = all_docs if comparative else (canonical_doc,)
+    planned = tuple(
+        GenerationRequirement(
+            id=f"R{index}",
+            text=text,
+            canonical_doc_id=canonical_doc,
+            canonical_title=canonical_title,
+            allowed_doc_ids=allowed,
+            canonical_only=single_artifact,
+        )
+        for index, text in enumerate(requirement_texts, start=1)
+    )
+    return CanonicalGenerationPlan(
+        question=question,
+        requirements=planned,
+        citation_doc_map=citation_doc_map,
+        canonical_doc_ids=(canonical_doc,),
+        supplemental_doc_ids=tuple(doc for doc in all_docs if doc != canonical_doc),
+    )
 
 
-def contexts_for_bindings(
-    contexts: Sequence[dict[str, Any]],
-    bindings: dict[str, Any],
-) -> list[dict[str, Any]]:
-    selected_docs = set(str(value) for value in bindings.get("canonical_doc_ids") or [])
-    return [dict(value) for value in contexts if str(value.get("doc_id") or "") in selected_docs]
-
-
-def build_canonical_generation_messages(
-    *,
-    question: str,
-    plan: RequirementPlan,
-    contexts: Sequence[dict[str, Any]],
-) -> tuple[list[dict[str, str]], dict[str, str], bool]:
-    rendered, citation_to_doc, _ = group_contexts_by_document(contexts, question=question)
-    requirements = "\n".join(
-        f"{value.id}. {value.requirement} | planner_status={value.status}"
-        for value in plan.requirements
-    )
-    single_source = is_single_artifact_question(question) and not any(
-        value.status == "conflicting" for value in plan.requirements
-    )
-    mode = (
-        "This is likely a single-artifact question. Use one canonical document across supported requirements."
-        if single_source
-        else "Use one canonical document per requirement; different requirements may use different documents."
-    )
-    user = (
-        f"Question:\n{question}\n\n"
-        f"Source binding mode:\n{mode}\n\n"
-        f"Requirements:\n{requirements}\n\n"
-        f"Authorized evidence grouped by document:\n{rendered}"
-    )
+def build_canonical_messages(
+    plan: CanonicalGenerationPlan,
+    evidence: HierarchicalEvidence,
+) -> list[dict[str, str]]:
+    by_doc: dict[str, list[dict[str, Any]]] = {}
+    for context in evidence.contexts:
+        by_doc.setdefault(str(context.get("doc_id") or ""), []).append(context)
+    blocks: list[str] = []
+    for requirement in plan.requirements:
+        blocks.append(
+            f"<requirement id=\"{requirement.id}\" canonical_only=\"{str(requirement.canonical_only).lower()}\">\n"
+            f"Need: {requirement.text}\n"
+            f"CANONICAL DOCUMENT: doc_id={requirement.canonical_doc_id} title={requirement.canonical_title}\n"
+            f"{_render_contexts(by_doc.get(requirement.canonical_doc_id, []))}"
+        )
+        supplements = [doc for doc in requirement.allowed_doc_ids if doc != requirement.canonical_doc_id]
+        if supplements:
+            blocks.append(
+                "SUPPLEMENTAL/COMPARATIVE DOCUMENTS (keep identities separate):\n"
+                + "\n".join(
+                    f"doc_id={doc}\n{_render_contexts(by_doc.get(doc, []))}" for doc in supplements
+                )
+            )
+        blocks.append("</requirement>")
+    user = f"Question:\n{plan.question}\n\n" + "\n\n".join(blocks)
     return [
-        {"role": "system", "content": _CANONICAL_PROMPT},
+        {"role": "system", "content": CANONICAL_GENERATION_SYSTEM_PROMPT},
         {"role": "user", "content": user},
-    ], citation_to_doc, single_source
+    ]
 
 
-def _ids(raw: Any, valid: set[str], label: str) -> list[str]:
-    if not isinstance(raw, list):
-        raise PipelineError(f"{label} must be an array")
-    output: list[str] = []
-    for value in raw:
-        item = str(value).strip().upper()
-        if item not in valid:
-            raise PipelineError(f"unknown requirement ID in {label}: {item!r}")
-        if item not in output:
-            output.append(item)
-    return output
-
-
-def validate_canonical_generation(
+def validate_canonical_payload(
     payload: dict[str, Any],
     *,
-    valid_citations: set[str],
-    citation_to_doc: dict[str, str],
-    requirement_ids: set[str],
-    single_source: bool,
+    plan: CanonicalGenerationPlan,
 ) -> dict[str, Any]:
-    raw_requirements = payload.get("requirements")
-    if not isinstance(raw_requirements, list) or not raw_requirements:
-        raise PipelineError("canonical generation requires non-empty requirements")
-    if len(raw_requirements) != len(requirement_ids):
-        raise PipelineError("canonical generation must return exactly one row per requirement")
+    raw = payload.get("requirements")
+    if not isinstance(raw, list) or len(raw) != len(plan.requirements):
+        raise PipelineError("generation must return exactly one result per requirement")
+    expected = {value.id: value for value in plan.requirements}
+    output: list[dict[str, Any]] = []
     observed: set[str] = set()
-    validated_rows = []
-    covered = []
-    missing = []
-    all_citations: list[str] = []
-    canonical_docs: list[str] = []
-    final_parts: list[str] = []
-    for raw in raw_requirements:
-        if not isinstance(raw, dict):
-            raise PipelineError("canonical requirement row must be an object")
-        requirement_id = str(raw.get("id") or "").strip().upper()
-        if requirement_id not in requirement_ids or requirement_id in observed:
-            raise PipelineError(f"invalid or duplicate requirement id: {requirement_id!r}")
+    for item in raw:
+        if not isinstance(item, dict):
+            raise PipelineError("requirement result must be an object")
+        requirement_id = str(item.get("id") or "").strip().upper()
+        if requirement_id not in expected or requirement_id in observed:
+            raise PipelineError(f"invalid or duplicate requirement ID: {requirement_id!r}")
         observed.add(requirement_id)
-        is_missing = raw.get("missing")
-        if not isinstance(is_missing, bool):
-            raise PipelineError(f"{requirement_id} missing must be boolean")
-        answer = str(raw.get("answer") or "").strip()
-        canonical_doc = str(raw.get("canonical_doc_id") or "").strip()
-        citations = raw.get("citations")
-        normalized = False
-        if is_missing:
-            # Citations attached to an explicit missing row are formatting noise,
-            # not factual support. Drop them instead of spending a retry, and keep
-            # the visible result fail-closed as INSUFFICIENT_EVIDENCE.
-            normalized = bool(canonical_doc or citations or answer != "INSUFFICIENT_EVIDENCE")
-            canonical_doc = ""
-            answer = "INSUFFICIENT_EVIDENCE"
-            values: list[str] = []
-            missing.append(requirement_id)
-        else:
-            probe = validate_generation(
-                {
-                    "answerable": True,
-                    "answer": answer,
-                    "citations": citations,
-                },
-                valid_citations=valid_citations,
+        requirement = expected[requirement_id]
+        status = str(item.get("status") or "").strip().lower()
+        if status not in {"supported", "missing", "conflicting"}:
+            raise PipelineError(f"invalid status for {requirement_id}: {status!r}")
+        answer = str(item.get("answer") or "").strip()
+        citations = _unique_strings(item.get("citations"), "citations")
+        unknown = [citation for citation in citations if citation not in plan.citation_doc_map]
+        if unknown:
+            raise PipelineError(f"unknown citations for {requirement_id}: {unknown}")
+        source_docs = _unique_strings(item.get("source_doc_ids"), "source_doc_ids")
+        actual_docs = tuple(dict.fromkeys(plan.citation_doc_map[citation] for citation in citations))
+        if set(source_docs) != set(actual_docs):
+            raise PipelineError(f"source_doc_ids must match citation provenance for {requirement_id}")
+        if status == "missing":
+            if citations or source_docs:
+                raise PipelineError(f"missing {requirement_id} cannot cite evidence")
+        elif not answer or not citations:
+            raise PipelineError(f"{status} {requirement_id} requires answer and citations")
+        disallowed = set(actual_docs) - set(requirement.allowed_doc_ids)
+        if disallowed:
+            raise PipelineError(
+                f"source contamination for {requirement_id}: {sorted(disallowed)} outside allowed documents"
             )
-            answer = str(probe["answer"])
-            values = list(probe["citations"])
-            if not canonical_doc:
-                raise PipelineError(f"supported {requirement_id} requires canonical_doc_id")
-            citation_docs = {
-                citation_to_doc[citation]
-                for citation in values
-                if citation in citation_to_doc
-            }
-            if len(citation_docs) == 1 and canonical_doc not in citation_docs:
-                # The concrete S* evidence identity is auditable and less prone to
-                # a copied doc-id typo than a free-form canonical_doc_id field.
-                canonical_doc = next(iter(citation_docs))
-                normalized = True
-            wrong = [citation for citation in values if citation_to_doc.get(citation) != canonical_doc]
-            if wrong:
-                raise PipelineError(
-                    f"{requirement_id} cites evidence outside canonical document {canonical_doc}: {wrong}"
-                )
-            if not values:
-                raise PipelineError(f"supported {requirement_id} requires citations")
-            if not re.search(r"\[S[1-9][0-9]*\]", answer):
-                raise PipelineError(f"supported {requirement_id} answer requires inline citation")
-            covered.append(requirement_id)
-            canonical_docs.append(canonical_doc)
-            final_parts.append(answer)
-            for citation in values:
-                if citation not in all_citations:
-                    all_citations.append(citation)
-        validated_rows.append(
+        if requirement.canonical_only and status == "supported" and set(actual_docs) != {requirement.canonical_doc_id}:
+            raise PipelineError(f"single-artifact {requirement_id} must cite only its canonical document")
+        output.append(
             {
                 "id": requirement_id,
-                "canonical_doc_id": canonical_doc,
+                "status": status,
                 "answer": answer,
-                "citations": values,
-                "missing": is_missing,
-                "normalized": normalized,
+                "citations": citations,
+                "source_doc_ids": list(actual_docs),
             }
         )
-    if observed != requirement_ids:
-        raise PipelineError("canonical generation omitted requirements")
-    if single_source and len(set(canonical_docs)) > 1:
-        raise PipelineError("single-artifact question used more than one canonical document")
-    answerable = bool(covered)
-    final_answer = "\n".join(final_parts) if final_parts else "INSUFFICIENT_EVIDENCE"
-    # The model's top-level fields are intentionally ignored after validating rows.
-    return {
-        "answerable": answerable,
-        "answer": final_answer,
-        "citations": all_citations,
-        "covered_requirements": sorted(covered),
-        "missing_requirements": sorted(missing),
-        "requirements": validated_rows,
-        "canonical_doc_ids": list(dict.fromkeys(canonical_docs)),
-        "single_source_enforced": single_source,
-        "top_level_answer_ignored": True,
-    }
+    output.sort(key=lambda value: int(value["id"][1:]))
+    return {"requirements": output}
 
 
-def build_global_generation_messages(
+def generate_canonical_answer(
+    client: JsonClient,
     *,
     question: str,
-    contexts: Sequence[dict[str, Any]],
-    max_documents: int = 8,
-    leaves_per_document: int = 3,
-    max_chars: int = 14_000,
-) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    hierarchy = build_global_hierarchy(
-        contexts,
-        question=question,
-        max_documents=max_documents,
-        leaves_per_document=leaves_per_document,
-        max_chars=max_chars,
+    evidence: HierarchicalEvidence,
+    requirements: Sequence[str] = (),
+    max_tokens: int = 1_024,
+    temperature: float = 0.0,
+) -> CanonicalGenerationResult:
+    plan = build_canonical_plan(question, evidence, requirements=requirements)
+    api = client.complete_json(
+        messages=build_canonical_messages(plan, evidence),
+        max_tokens=max_tokens,
+        temperature=temperature,
+        validator=lambda payload: validate_canonical_payload(payload, plan=plan),
     )
-    allowed_citations = ", ".join(hierarchy["source_citations"])
-    allowed_documents = ", ".join(value["doc_id"] for value in hierarchy["documents"])
-    user = (
-        f"Question:\n{question}\n\n"
-        f"Allowed citation IDs (use no others): {allowed_citations}\n"
-        f"Allowed document IDs (use no others): {allowed_documents}\n\n"
-        f"Extractive document hierarchy:\n{hierarchy['rendered']}"
+    rows = tuple(dict(value) for value in api.value["requirements"])
+    supported = [value for value in rows if value["status"] in {"supported", "conflicting"}]
+    answer = "\n".join(value["answer"] for value in rows if value["answer"])
+    citations = tuple(
+        dict.fromkeys(citation for value in supported for citation in value["citations"])
     )
-    return [
-        {"role": "system", "content": _GLOBAL_PROMPT},
-        {"role": "user", "content": user},
-    ], hierarchy
+    contaminated = sum(
+        bool(set(value["source_doc_ids"]) - set(plan.requirements[index].allowed_doc_ids))
+        for index, value in enumerate(rows)
+    )
+    canonical_correct = sum(
+        not value["source_doc_ids"]
+        or plan.requirements[index].canonical_doc_id in value["source_doc_ids"]
+        for index, value in enumerate(rows)
+    )
+    return CanonicalGenerationResult(
+        answerable=bool(supported),
+        answer=answer,
+        citations=citations,
+        requirement_results=rows,
+        canonical_source_accuracy_proxy=canonical_correct / len(rows) if rows else 0.0,
+        source_contamination_count=contaminated,
+        source_contamination_rate=contaminated / len(rows) if rows else 0.0,
+        plan=plan,
+        api=api,
+    )
 
 
-def validate_global_generation(
-    payload: dict[str, Any],
-    *,
-    valid_citations: set[str],
-    valid_documents: set[str],
-) -> dict[str, Any]:
-    base = validate_generation(payload, valid_citations=valid_citations)
-    documents = payload.get("documents_used")
-    if not isinstance(documents, list):
-        raise PipelineError("documents_used must be an array")
-    selected: list[str] = []
-    for value in documents:
-        doc_id = str(value).strip()
-        if doc_id not in valid_documents:
-            raise PipelineError(f"unknown global document: {doc_id!r}")
-        if doc_id not in selected:
-            selected.append(doc_id)
-    if base["answerable"] and not selected:
-        raise PipelineError("answerable global response must identify documents_used")
-    if base["answerable"] and len(selected) < 2:
-        # A global claim from one document is too weak; return visible insufficient
-        # evidence rather than quietly promoting a local example into a global fact.
-        return {
-            **base,
-            "answerable": False,
-            "answer": "INSUFFICIENT_EVIDENCE",
-            "citations": [],
-            "covered_requirements": [],
-            "missing_requirements": ["R1"],
-            "documents_used": selected,
-            "global_support_insufficient": True,
-        }
-    return {
-        **base,
-        "covered_requirements": ["R1"] if base["answerable"] else [],
-        "missing_requirements": [] if base["answerable"] else ["R1"],
-        "documents_used": selected,
-        "global_support_insufficient": False,
-    }
+def _render_contexts(contexts: Sequence[dict[str, Any]]) -> str:
+    blocks = []
+    for context in contexts:
+        citation = str(context.get("citation_id") or "")
+        blocks.append(
+            f"[{citation}] doc_id={context.get('doc_id') or ''} title={context.get('title') or ''} "
+            f"section={(context.get('hierarchy') or {}).get('section_path') or context.get('section_path') or ''}\n"
+            f"{context.get('text') or ''}"
+        )
+    return "\n\n".join(blocks) or "NO EVIDENCE"
 
 
-def should_use_global_route(question: str, question_type: str | None) -> bool:
-    return is_global_question(question, question_type)
+def _unique_strings(value: Any, name: str) -> list[str]:
+    if not isinstance(value, list):
+        raise PipelineError(f"{name} must be an array")
+    output = []
+    for item in value:
+        text = str(item).strip()
+        if not text:
+            raise PipelineError(f"{name} must not contain empty values")
+        if text not in output:
+            output.append(text)
+    return output

@@ -13,7 +13,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-STRATEGY_VERSION = "query-spans-v1"
+STRATEGY_VERSION = "query-spans-v2"
 _CITATION = re.compile(r"S[1-9][0-9]*\Z")
 _WORDS = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*|[\u3400-\u9fff]+", re.IGNORECASE)
 _STOP = frozenset(
@@ -194,8 +194,15 @@ Returned lexical affinities MUST NOT be reported as factual support/coverage.
             relevance = sum(score / (1 + lexical_hits[i]) for i, score in enumerate(candidate.affinities))
             diversity = 1 + 0.15 * per_document[str(candidate.context.get("doc_id") or candidate.citation)]
             density = math.sqrt(max(1.0, len(candidate.block) / 600.0))
-            # Tiny prior stabilizes unmatched queries without overriding actual matches.
-            return ((relevance + 0.001 / (1 + candidate.ordinal)) / (diversity * density),
+            # Retrieval ranks contain information absent from local lexical overlap.
+            # Without this prior, keyword-dense unrelated chunks displace the very
+            # document the retriever correctly found (observed on real replay).
+            raw_rank = candidate.context.get("document_rank")
+            rank = float(raw_rank) if isinstance(raw_rank, (int, float)) and not isinstance(raw_rank, bool) else 1.0
+            if not math.isfinite(rank) or rank < 1:
+                rank = 1.0
+            source_prior = rank ** -0.75
+            return ((relevance + 0.001 / (1 + candidate.ordinal)) * source_prior / (diversity * density),
                     -candidate.ordinal, -candidate.start)
 
         add(max(available, key=utility))

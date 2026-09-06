@@ -1,0 +1,222 @@
+RAG 与 OpenClaw 差距审计
+审计日期：2026-09-05
+
+一、结论
+
+项目并不是缺少检索组件，而是证据发现、证据进入模型、答案完整性三个环节没有形成可恢复的闭环。当前默认路径会机械截掉已找到的答案；最新 canonical 实验又把非比较类问题统一锁到第一篇文档；实验指标仍在这个二次筛选之前计算，因而把一部分证据装配损失伪装成生成模型能力问题。
+
+不能据此宣称这些原因解释了 OpenClaw 与本项目之间全部数值差距。双方语料、指标、模型和执行预算没有对齐，本轮没有复现 OpenClaw 的完整榜单运行，也没有新的付费生成 A/B。可以确定的是：本项目存在独立于生成模型、能用当前代码确定性复现的信息损失和恢复路径缺失。
+
+二、项目、版本与本轮范围
+
+本地项目：<repo-root>
+父目录：<workspace-root>
+当前分支：develop
+本轮观察的 HEAD：f0b5b79
+A40 实验目录线索：<server-experiment-root>/repro-adaptive-v1。本轮没有重新连接 A40，不将历史部署描述当作当前服务状态。
+
+项目身份及对比对象先由历史记忆确认，再通过本地代码、已保存交接文件和公开原始资料核实。对比对象是 OpenClaw 在 EnterpriseRAG-Bench 上的表现，不是把 OpenCode、Onyx、Claude Code 或 Bash Agent 混为一个系统。
+
+实际完成：读取当前源码；重新审计历史500题保存结果；运行当前 Python 全目录测试；执行三个无网络、无模型调用的最小回放；核对最新 E1–E6 注册表；核对官方基准的方法、生成脚本说明和 OpenClaw 运行机制。
+
+本轮没有修改生产代码、模型配置、索引、alias、API Key 或服务；没有运行本地 Docker；没有新增云模型调用；没有执行新的500题生成或 Plus 验收。仅新增本报告，未提交、未 push。
+
+进入工作区时已有六个未跟踪工具/测试文件，均保留未动：
+tools/hierarchical_index_build.py
+tools/hierarchical_retrieval_eval.py
+tools/rag_e1_e6_report.py
+tools/test_hierarchical_index_build.py
+tools/test_hierarchical_retrieval_eval.py
+tools/test_rag_e1_e6_report.py
+
+三、OpenClaw 的哪些事实已核实，哪些没有
+
+已核实：基准发布者明确描述过 OpenClaw 配合 BM25 工具取得较高成绩。官方网页展示 OpenClaw 约68.2的总分。官方指标定义是：每题先判正确与否，正确题按事实完整度计分，错误题记零，再取所有题平均。因此这个总分不是简单的正确率。[W1–W3]
+
+OpenClaw 的公开运行机制包括模型调用、工具执行、工具观察进入会话、继续执行，以及上下文和运行期限管理。其公开系统提示要求从薄弱工具结果恢复、完成任务前验证。这说明它提供了反复查找和修正的执行能力；不意味着每一道题都一定正确执行了这些步骤。[W4–W5]
+
+官方基准另外公开了一个 Bash Agent 基线：搜索、读文档、维护所选文档集合，依据观察继续搜索；结果截断后保留完整输出的访问位置；超时后收尾。该基线的工具和循环源码可研究，但它不是 OpenClaw 榜单条目的完整复现脚本。不能把 Bash Agent 的 GPT-5.4、10分钟预算、工具清单直接安到 OpenClaw 头上。[W6]
+
+未获得：OpenClaw 该次榜单运行的精确提交、模型版本、推理设置、完整提示词、BM25 工具参数、逐题轨迹、总成本与延迟。浏览了官方主页、仓库方法说明、answer_generation 目录、论文和发布者说明；Hugging Face 动态榜单的完整配置未能读取。因此“差距中模型占多少、Agent循环占多少、预算占多少”仍须同条件对照，不能凭排行榜做因果归因。
+
+最合理的待验证解释：OpenClaw 的优势不只是第一次搜索排得更好，而是能够把第一次搜索当成线索，继续定位实际答案、补充关联来源，并推迟到证据足够时再回答。本项目当前主流程基本不具备这样的生成后恢复路径。
+
+四、先纠正比较口径
+
+1. 语料不是同一规模。
+官方完整基准为511,962篇文档、500个问题。本项目历史实验为10,722篇文档。当前 tools/prepare_enterpriserag_bench.py:18,61–84 默认收集10,000篇非目标填充文档，并依据问题的 expected_doc_ids 保留目标文档。这是 gold-aware 的缩小实验语料，不是完整榜单环境。
+
+这种做法本身不等于把标准答案泄漏给生成模型，但会改变检索难度和干扰文档分布。98.09%的本地 Hit@10 不能用来证明本项目在完整50万文档场景下也超过 OpenClaw 的检索能力。
+
+2. 来源条件也需要对齐。
+EnterpriseRagJavaBenchmark.java:171 将 question.sourceTypes() 传入 sourceAclFilter；:716 起据此构造 sourceType 和来源组过滤。因此本地评测使用了问题携带的来源信息。复现公开方案时应明确双方是否允许相同来源元数据。不能把来源已知检索与全来源未知检索混比。
+
+3. Hit@10 与 Document Recall 不是一个指标。
+命中至少一篇目标文档，不代表所需文档全部找齐，也不代表找到该文档内的关键片段。官方 Document Recall 衡量目标文档集合中被找到的比例。多文档问题尤其不能用任意命中替代完整召回。[W3]
+
+4. 本地“约53%”不是正确率。
+本项目历史 Answer Fact Recall 主要是词法代理指标。官方 Correctness 与 Completeness 由模型进行语义判断，Overall 又对错误答案实行零分门控。三者数值不能直接相减。官方评测也并非绝对真值，重要问题仍需人工校准。
+
+五、当前主流程的具体问题
+
+A. Adaptive 是有条件分支的流水线，不是生成后闭环。
+位置：tools/adaptive_rag/controller.py:99–305。
+流程是接收已有 contexts → 做需求映射 → 可选执行一批补检索并重新映射 → 预算打包 → 一次生成 → 一次校验 → 返回。没有依据最终答案缺项或校验删除结果，重新选择搜索动作和补证据的循环。
+
+secondary_max_queries=4 表示一次补检索阶段可发出的查询上限，不是四轮“观察—推理—搜索”。生成阶段和 Verifier 之后没有返回检索阶段的控制边。
+
+B. 空证据在补检索之前直接退出。
+位置：controller.py 中 original_contexts 为空时立即调用 _no_evidence。
+本轮用无网络 Mock 做了最小回放：配置 secondary_retrieval，提供 principal 占位，强制 deep，并传入空 contexts。结果为 search_calls=0、model_calls=0、answerable=False。
+
+这证明当前控制器无法在已有证据为空时尝试恢复。它不意味着所有空结果都必须继续搜索；正确策略应区分未授权、真正不存在、检索失败或改写可能救回，并始终保留权限约束。
+
+C. Fast 在未检查证据时就将需求标成 supported。
+位置：controller.py:307–329；tools/adaptive_rag/requirements.py:171–196。
+deterministic_requirement_plan 只接收问题文本，不接收证据，却返回 answerability=answerable、R1.status=supported、citations=()。
+
+本轮直接调用该函数，输出 supported_count=1、missing_count=0、selected_citations=()。因此这里的 supported 实际是占位，不是支持已经得到证明。它会使依赖 missing_count 的补检索触发机制失去部分信号，也不能用于宣称需求覆盖完整。
+
+D. 默认预算仍会删除已找到的答案。
+位置：tools/adaptive_rag/budget.py:58–70；tools/adaptive_rag_pipeline.py:55。
+默认策略仍为 legacy。Fast 初始预算10,000字符、最多12块、每文档最多2块。query-spans 是显式选择项，没有自动成为默认。
+
+真实历史题 qst_0026 中，正确文档 S21 包含恢复需要几十分钟的时间信息，但同文档 S1、S11 先占了两块，S21 未进入 Prompt；模型最后说没有典型恢复时间。
+qst_0174 中，S21 包含所需的11个字段，仍被两块上限删除。Prompt 词法分却达到90.4%，因为周边段落包含相同术语。这是“相关内容很多”被误当成“答案值已经在场”。[L1]
+
+这些旧问题并非毫无处理：query-spans 已实现且做过小样本 A/B，但历史全480题 packing 回退率仍为22.71%，超过15%门槛，因此保留 opt-in 是有理由的。不能只把默认开关切过去就宣称解决。[L2]
+
+六、本轮新确认：canonical 实验的限制过度扩大
+
+位置：tools/adaptive_rag/canonical_generation.py:130–203。
+
+build_canonical_plan 使用 ranked_docs[0] 作为所有 Requirement 的 canonical_doc。只要问题没有匹配比较关键词，而且 route_mode 不是 global，就将 allowed_doc_ids 设为仅这一篇文档。
+
+关键问题在于：即使 canonical_only=False，allowed_doc_ids 也仍可能只有这一篇。build_canonical_messages 只渲染 canonical 文档及 allowed_doc_ids 中的补充文档，所以其他已检索到的来源根本不会发给模型。validate_canonical_payload 还会拒绝来自允许集合之外的引用。
+
+最小反例：
+问题：When did the incident begin and when was it mitigated?
+S1/d1：The incident began at 16:09 UTC.
+S2/d2：The incident was mitigated at 16:34 UTC.
+文档排序：d1、d2；route_mode=local。
+
+当前代码实际输出：
+R1: canonical_only=False，allowed_doc_ids=(d1,)
+R2: canonical_only=False，allowed_doc_ids=(d1,)
+生成消息包含 S1，不包含 S2，不包含16:34。
+
+这不是模型不理解问题，而是模型请求形成之前已经删掉了第二个答案。为了修复“引用串来源”而把所有子问题锁到同一篇文档，会引入新的完整性损失。
+
+正确修正方向不是撤掉所有来源校验，而是将来源绑定做到每个 Requirement：确实询问单一页面/单一对象时约束该对象；多事实、多文档问题允许各自有独立证据来源。第一名只应是候选，不应未经验证就成为所有问题共同的权威文档。
+
+七、本轮新确认：canonical 的 Prompt 指标测错了阶段
+
+位置：tools/rag_e1_e6_experiment.py:130–164、:462–486。
+
+live() 先执行 score_prompt(row, packed)，该函数拼接 packed['contexts'] 中的全部文本计算覆盖率。之后 generate_canonical_answer 才调用 canonical 的消息构造器，按上一节规则进行额外的文档筛选。
+
+因此，注册表中的 prompt_requirement_evidence_coverage 等字段，并不保证衡量的是 E2 实际发给模型的最终证据。它们更准确的含义是“canonical 生成前的候选证据覆盖”。
+
+本轮用上述两文档反例调用真实评分函数和消息构造器：
+报告的证据覆盖率：1.0。
+实际允许并送入生成消息的证据覆盖率：0.5。
+16:34 是否在最终消息：False。
+
+这是确定性反例，不是对完整20题或500题的重新评分；但它足以否定“统计的 Prompt 分高，就能证明模型看到完整证据”这一推断。
+
+修正要求：在模型调用边界记录最终 messages 的脱敏快照/哈希、实际引用集合、每个引用的原文范围、截断原因和 budget；离线指标必须基于这一层。不要只在上游 contexts 评分后继续沿用 Prompt 字段名。
+
+八、最新 E1–E6 的状态不是“全部优化成功”
+
+以下是从已保存的 2026-09-05-rag-e1-e6-registry.json 读取的历史实验，不是本轮新增模型调用。[L3]
+
+20题 Qwen Flash 配对：
+基线 query-spans-flat：Answer Fact Coverage 50.29%，59,101 tokens。
+E5-flat：45.96%，59,040 tokens；Exact 改善，但完整性、列表和条件指标回退，状态 hold。
+E2-canonical：22.00%，27,133 tokens；完整性显著回退，状态 hold。
+
+E2 减少 Token 不能单独算成功。结合当前源码，生成侧删掉非 canonical 来源是一个已证实存在的损失机制；但没有修复后的同条件 A/B，不能量化它解释了22%结果中的多少，也不能排除模型和评分因素。
+
+10题 E6 global structured 记录为5次错误，整体质量指标没有通过，状态 hold。本轮未重新读取并归因这5次原始错误，不将它们随意归结为 JSON 解析或模型能力。
+
+E1 已有“授权 Top 文档内重新查叶节点”的独立实现。当前搜索其引用只发现测试和实验报告工具，默认 Adaptive CLI/控制器中未发现调用接线。应区分“工具已经写出”和“线上回答路径正在使用”。
+
+Parent-child 已有隔离索引实验，但不能因此切换正式检索。True late chunking 仍缺少 token embeddings 与 offset mapping；当前端点只有 pooled embedding。增加所谓 late chunking 开关不能替代底层能力。[L3]
+
+另有两个指标问题仍在：Citation ID validity=100% 仅证明编号存在；最终 covered_requirements 继承 Verifier 前的字段，未在删句后重算。编号正确、允许来源一致，也不代表句子被原文语义支持。[L1]
+
+九、本轮验证结果
+
+1. 历史500题同口径审计已重新执行。
+命令：
+PYTHONDONTWRITEBYTECODE=1 <workspace-root>/.venv/bin/python tools/rag_trace_audit.py --contexts /tmp/adaptive_rag/mixed-slack-linear-contexts.jsonl --answers /tmp/adaptive_rag/flash-release-adaptive-full500.jsonl
+
+输入文件 SHA-256：
+contexts: b7663976eee8e2499de4b4d3ffe609f0310e107f34dc3a77c5e6d8a8d2496c3b
+answers: 090c70ef0428e0760ac7c01a6fe9544c15604c83310758a5ed1c39a051aae660
+
+同一480题、同一词法评分器：
+完整 Evidence 77.0110%。
+每文档块数限制后74.8132%。
+总块数限制后70.5134%。
+实际 Prompt 65.8470%。
+Verifier 前53.4218%。
+Verifier 后53.1896%。
+
+这是历史结果重新审计，不是当前模型重新生成。各差值描述代理指标，不等于真实事实损失比例。qst_0065 的两个时间答对但词法分仅30.95%，再次说明词法指标有明显偏差。[L1]
+
+2. 当前 Python 全目录测试已运行。
+命令：
+PYTHONDONTWRITEBYTECODE=1 <workspace-root>/.venv/bin/python -m unittest discover -s tools -p 'test_*.py'
+
+结果：Ran 157 tests；FAILED (errors=1)。其余已加载测试通过，但有一个模块根本没有成功导入，不能将整个测试套件称为通过。
+错误：tools/test_hierarchical_rag.py:6 导入 build_canonical_generation_messages；当前 canonical_generation.py 导出的对应接口是 build_canonical_messages，旧测试还引用其他旧接口。不能只做一次名字替换就保证所有契约相容。
+历史注册表中的119项通过不代表当前全目录测试也通过。
+
+git diff --check 本轮通过。没有重跑 Java 构建；历史 Java 已有后续修复记录，本轮不复述“Java仍然坏了”的旧结论。
+
+3. 三个当前代码的最小确定性检查通过了故障复现。
+空 contexts + Deep + 已配置补检索：搜索调用0次。
+Fast deterministic plan：无证据引用却返回 supported。
+两文档 canonical：实际消息丢失第二文档，评分100%而实际证据50%。
+这些检查不消耗模型费用，也不证明修复后的端到端增益；它们定位的是实际代码行为。
+
+十、建议的收敛方式
+
+先修正确性和可观测性，再做受控 Agent 对照，而不是继续叠加检索组件。
+
+P0：让测试契约与当前实现一致；记录模型最终消息中的实际证据并修正指标命名；取消非单一对象问题的统一第一文档硬锁；将 Fast 的未核验状态与 supported 分开；Verifier 修改后重新计算最终需求覆盖。不要通过降低评分标准制造进步。
+
+P1：保留 Java 已有检索、权限和文档定位能力，在其上接一个有界的搜索—阅读循环。需要的动作不是任意 shell，而是 search、read_document/read_section、expand_neighbors、finalize。所有动作保留 principal、tenant、ACL 与来源约束，不能借扩大上下文越权。
+
+第一次先找候选文档；若问题要求的时间、字段、条件或例外不在当前片段中，优先读取已授权文档的相关段落或相邻块。只有确定缺失来自检索范围，才改写问题或搜索新文档。不能把“片段中没有”直接等同于“库里不存在”。
+
+循环状态要保存每个需求、实际原文、doc/chunk/offset、待验证缺口及已经试过的动作。终止条件应为需求已被证据覆盖、继续探索无新信息、预算耗尽或安全/权限阻断。预算耗尽要回答已支持部分并明确缺口，而不是强制生成一个貌似完整的答案。
+
+不要把所有问题都送入昂贵循环。可证明充分的简单问题保持快速路径；列表、条件、跨文档、冲突以及读取被截断的问题才升级。是否值得升级，需要用质量—Token—延迟一起判断。
+
+P2：建立能够区分模型效应与控制流程效应的对照。
+先在同一语料、同一题集、同一权限、同一输入可见字段下比较：Qwen + 当前流程、Qwen + 有界Agent；再对同一更强模型重复这两臂。模型版本、温度、总输入输出Token、工具调用上限、重试和超时均记录。以预算档位画质量—成本关系，避免把更多预算误认为更好架构。
+
+使用官方格式输出 question_id、answer、document_ids；采用固定版本官方语义评测，并用人工标注关键值、列表、条件、否定、来源归属的样本校准。保留词法分作为辅助，不能作为唯一晋级目标。
+
+已有500题经过多轮调参，不能事后称其中某一部分为从未见过的独立测试集。需要冻结后续验证集或补充独立问题；定向审计题只能作为回归集。10k语料通过后，再验证扩大语料规模，不要直接用本地分数与公开全量排行榜排序。
+
+十一、证据与资料
+
+本地证据：
+[L1] docs/RAG_TRACE_DIAGNOSIS_2026-09-04.md；Library中的同名.txt；本轮重新审计的两份历史JSONL及上述哈希。
+[L2] docs/RAG_LOOP10_OPTIMIZATION_REPORT_2026-09-04.md。该记录明确 query-spans-v3 保持 opt-in，且20题生成效果与480题离线packing指标分别报告。
+[L3] Library: 2026-09-05-rag-e1-e6-registry.json，current_head_observed=f0b5b79，export_status=repaired_export。其119项测试结论为历史记录，不替代本轮157项发现结果。
+[L4] 当前 develop 源码：tools/adaptive_rag/controller.py、budget.py、requirements.py、canonical_generation.py、hierarchical_evidence.py；tools/adaptive_rag_pipeline.py、rag_e1_e6_experiment.py、prepare_enterpriserag_bench.py；EnterpriseRagJavaBenchmark.java；tools/test_hierarchical_rag.py。
+
+公开原始资料，2026-09-05读取：
+[W1] EnterpriseRAG-Bench 官方主页：https://onyx.app/enterpriserag-bench
+[W2] 基准发布者说明：https://www.linkedin.com/posts/yuhongsun_were-open-sourcing-the-first-benchmark-for-activity-7457764875487006720-Baxt
+[W3] EnterpriseRAG-Bench 论文，第5节指标与第6节基线：https://arxiv.org/html/2605.05253v1
+[W4] OpenClaw Agent loop：https://docs.openclaw.ai/concepts/agent-loop
+[W5] OpenClaw System prompt：https://docs.openclaw.ai/concepts/system-prompt
+[W6] 官方 answer_generation 实现说明：https://github.com/onyx-dot-app/EnterpriseRAG-Bench/tree/main/src/scripts/answer_generation
+[W7] 官方答案评测入口：https://github.com/onyx-dot-app/EnterpriseRAG-Bench/tree/main/answer_evaluation
+
+最终判断：应优先修复“证据已经找到却未真正送到模型，以及丢失后没有恢复机会”。更换框架、增加 reranker、继续微调 packing，都不能替代这个修复。OpenClaw 提供了值得对照的迭代执行能力，但它不是未经复现就能保证提升的答案。
